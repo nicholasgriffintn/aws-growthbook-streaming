@@ -1,0 +1,26 @@
+{
+  "name": "aws-growthbook-streaming",
+  "version": "1.0.0",
+  "description": "An investigation into Growthbook on AWS with a streaming architecture",
+  "scripts": {
+    "build": "tsc",
+    "cdk": "cdk",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy",
+    "diff": "cdk diff",
+    "synth": "cdk synth",
+    "bootstrap": "cdk bootstrap",
+    "nag": "cdk-nag"
+  },
+  "devDependencies": {
+    "@types/node": "25.3.0",
+    "aws-cdk": "2.1106.1",
+    "cdk-nag": "2.37.55",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.239.0",
+    "constructs": "10.5.1",
+    "source-map-support": "0.5.21"
+  }
+}
