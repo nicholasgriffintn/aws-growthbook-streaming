@@ -22,8 +22,14 @@ graph TD
     ALB["ALB\nHTTP:80 → redirect\nHTTPS:443"]
     APP["app target group\nport 3000"]
     API["api target group\nport 3100"]
-    ECS["ECS Fargate\nprivate subnet"]
+    ECS["ECS Fargate (GrowthBook)\nprivate subnet"]
     DDB["DocumentDB\nprivate subnet · TLS · KMS encrypted"]
+    CF["CloudFront\nDemo site"]
+    APIGW["API Gateway\n/analytics · /experiment"]
+    LMB["Lambda\nanalytics · experiment"]
+    FH["Kinesis Firehose\n2 delivery streams"]
+    RS["Redshift Serverless\nprivate subnet"]
+    S3["S3\nFirehose staging/backup"]
 
     R53 --> ALB
     ALB --> APP
@@ -31,16 +37,29 @@ graph TD
     APP --> ECS
     API --> ECS
     ECS -->|":27017"| DDB
+    ECS -->|":5439"| RS
+
+    CF --> APIGW
+    APIGW --> LMB
+    LMB --> FH
+    FH --> S3
+    FH -->|"COPY"| RS
 ```
 
-| Stack              | Purpose                                                            |
-| ------------------ | ------------------------------------------------------------------ |
-| `CoreNetworkStack` | VPC, 3 AZs, public/private subnets, NAT gateway, VPC endpoints     |
-| `SecretsStack`     | KMS key + SSM parameter stubs                                      |
-| `IamStack`         | ECS task/execution role scoped to SSM parameters + KMS key         |
-| `ECRStack`         | ECR repository for the GrowthBook image                            |
-| `ApplicationStack` | ECS cluster, task definition, ALB, target groups, Route 53 records |
-| `DocumentDbStack`  | DocumentDB cluster (TLS, KMS encrypted, deletion protection)       |
+| Stack                     | Purpose                                                            |
+| ------------------------- | ------------------------------------------------------------------ |
+| `CoreNetworkStack`        | VPC, 3 AZs, public/private subnets, NAT gateway, VPC endpoints     |
+| `SecretsStack`            | KMS key + SSM parameter stubs                                      |
+| `IamStack`                | ECS task/execution role scoped to SSM parameters + KMS key         |
+| `ECRStack`                | ECR repository for the GrowthBook image                            |
+| `ApplicationStack`        | ECS cluster, task definition, ALB, target groups, Route 53 records |
+| `DocumentDbStack`         | DocumentDB cluster (TLS, KMS encrypted, deletion protection)       |
+| `StreamingStorageStack`   | S3 bucket for Firehose staging and backup                          |
+| `RedshiftStack`           | Redshift Serverless namespace + workgroup, admin secret            |
+| `FirehoseStack`           | Two Firehose delivery streams → Redshift (analytics + experiment)  |
+| `ApplicationLambdasStack` | Lambda functions that put records to Firehose                      |
+| `ApiGatewayStack`         | REST API exposing `/analytics`, `/experiment`, `/health`           |
+| `FrontendStack`           | S3 + CloudFront demo site                                          |
 
 ## Setup
 
@@ -92,6 +111,79 @@ aws ecs update-service --cluster CLUSTER_NAME --service growthbook --force-new-d
 ```
 
 Then wait for the deployment to finish before accessing the app at `https://growthbook.{domain}`.
+
+### 5. Configure the Redshift cluster
+
+After `RedshiftStack` deploys, connect via Redshift Query Editor using the admin credentials from Secrets Manager (`/{component}/redshift/admin`). Run:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS experimentation;
+
+CREATE TABLE IF NOT EXISTS experimentation.fact_events (
+  event_id    VARCHAR(36),
+  user_id     VARCHAR(255),
+  anonymous_id VARCHAR(255),
+  timestamp   TIMESTAMP,
+  event_type  VARCHAR(255),
+  page_path   VARCHAR(1024),
+  session_id  VARCHAR(36),
+  device_type VARCHAR(50),
+  properties  VARCHAR(MAX)
+);
+
+CREATE TABLE IF NOT EXISTS experimentation.fact_orders (
+  order_id    VARCHAR(36),
+  user_id     VARCHAR(255),
+  anonymous_id VARCHAR(255),
+  timestamp   TIMESTAMP,
+  amount      FLOAT8,
+  currency    VARCHAR(3),
+  device_type VARCHAR(50),
+  coupon_code VARCHAR(100)
+);
+
+CREATE USER growthbook_user WITH PASSWORD '<REPLACE_ME>';
+GRANT USAGE ON SCHEMA experimentation TO growthbook_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA experimentation TO growthbook_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA experimentation GRANT SELECT ON TABLES TO growthbook_user;
+```
+
+### 6. Connect GrowthBook to Redshift
+
+In GrowthBook, go to **Settings → Data Sources → Add Data Source → Redshift**.
+
+Use the workgroup endpoint from the `RedshiftStack` CloudFormation output (`WorkgroupEndpoint`):
+
+| Field    | Value                                   |
+| -------- | --------------------------------------- |
+| Host     | `<WorkgroupEndpoint>` (from CFN output) |
+| Port     | `5439`                                  |
+| Database | `analytics`                             |
+| User     | `growthbook_user`                       |
+| Password | password set in step 5                  |
+| Schema   | `experimentation`                       |
+
+### 7. Create GrowthBook fact tables
+
+After connecting the data source, create two fact tables in GrowthBook (**Data Sources → [your source] → Add Fact Table**):
+
+**fact_events** — raw event stream for behavioural metrics:
+
+```sql
+SELECT timestamp, user_id, anonymous_id, event_type, page_path, device_type
+FROM experimentation.fact_events
+```
+
+Suggested metrics: Add to Cart Rate (filter `event_type = 'add_to_cart'`), Signup Rate (filter `event_type = 'signup'`), Page Views per User.
+
+**fact_orders** — purchase events for revenue metrics:
+
+```sql
+SELECT timestamp, user_id, anonymous_id, amount, currency, device_type, coupon_code
+FROM experimentation.fact_orders
+```
+
+Suggested metrics: Conversion Rate (Proportion), Revenue per User (Mean → `SUM(amount)`), Average Order Value (Ratio → `SUM(amount) / COUNT(*)`).
 
 ## Tear Down
 

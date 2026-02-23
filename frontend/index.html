@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GrowthBook Streaming Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>GrowthBook Streaming Demo</h1>
+            <p>Simulated e-commerce events → API Gateway → Lambda → Firehose → Redshift fact tables → GrowthBook metrics</p>
+        </header>
+
+        <main>
+            <div class="main-layout">
+                <section class="layout-left">
+                    <div class="card timeline-card">
+                        <div class="card-heading">
+                            <h2>Event Timeline</h2>
+                            <span class="card-subtitle" id="timelineSummary">Awaiting events</span>
+                        </div>
+                        <div class="chart-area">
+                            <canvas id="eventTimelineChart" height="280"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="log-monitoring-layout">
+                        <div class="card log-card">
+                            <div class="log-header">
+                                <h2>Event Log</h2>
+                                <span class="log-count" id="eventLogCount">0 events</span>
+                            </div>
+                            <div class="log-body">
+                                <ul id="eventLog" class="event-log-list">
+                                    <li class="empty-state">No events recorded yet.</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="card monitoring-card">
+                            <h2>Metrics</h2>
+                            <div class="metrics">
+                                <div class="metric">
+                                    <span class="metric-label">Events</span>
+                                    <span class="metric-value" id="totalEvents">0</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Orders</span>
+                                    <span class="metric-value" id="totalOrders">0</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Revenue</span>
+                                    <span class="metric-value" id="totalRevenue">$0</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">Users</span>
+                                    <span class="metric-value" id="uniqueUsers">0</span>
+                                </div>
+                            </div>
+
+                            <div class="status">
+                                <div class="status-item">
+                                    <span class="status-label">API</span>
+                                    <span class="status-value" id="apiStatus">Checking...</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="status-label">Last event</span>
+                                    <span class="status-value" id="lastEventType">—</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="layout-right">
+                    <div class="card">
+                        <h2>Simulation</h2>
+                        <div class="form-group">
+                            <label for="simulationRate">Users per burst: <span id="simulationRateValue">5</span></label>
+                            <input type="range" id="simulationRate" min="1" max="20" value="5">
+                        </div>
+                        <div class="sim-buttons">
+                            <button type="button" id="burstBtn">Run burst</button>
+                            <button type="button" id="autoBtn" class="btn-secondary">Start auto</button>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h2>Send event manually</h2>
+                        <div class="form-group">
+                            <label for="eventType">Event type</label>
+                            <select id="eventType">
+                                <option value="page_view">page_view</option>
+                                <option value="add_to_cart">add_to_cart</option>
+                                <option value="checkout_start">checkout_start</option>
+                                <option value="signup">signup</option>
+                                <option value="button_click">button_click</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="manualPagePath">Page path</label>
+                            <input type="text" id="manualPagePath" value="/products">
+                        </div>
+                        <button type="button" id="sendEventBtn">Send event</button>
+                    </div>
+
+                    <div class="card">
+                        <h2>Send order manually</h2>
+                        <div class="form-group">
+                            <label for="orderAmount">Amount ($)</label>
+                            <input type="number" id="orderAmount" value="49.99" min="0.01" step="0.01">
+                        </div>
+                        <div class="form-group">
+                            <label for="orderCoupon">Coupon code (optional)</label>
+                            <input type="text" id="orderCoupon" placeholder="SAVE10">
+                        </div>
+                        <button type="button" id="sendOrderBtn">Send order</button>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <footer>
+            <p>fact_events and fact_orders stream to Redshift → GrowthBook queries these as metric fact tables</p>
+        </footer>
+    </div>
+
+    <div id="notifications" class="notifications"></div>
+    <script src="app.js"></script>
+</body>
+</html>

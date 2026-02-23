@@ -8,6 +8,12 @@ import { DocumentDbStack } from "../lib/stacks/document-db-stack";
 import { ECRStack } from "../lib/stacks/ecr-stack";
 import { IamStack } from "../lib/stacks/iam-stack";
 import { SecretsStack } from "../lib/stacks/secrets-stack";
+import { StreamingStorageStack } from "../lib/stacks/streaming-storage-stack";
+import { RedshiftStack } from "../lib/stacks/redshift-stack";
+import { FirehoseStack } from "../lib/stacks/firehose-stack";
+import { ApplicationLambdasStack } from "../lib/stacks/application-lambdas-stack";
+import { ApiGatewayStack } from "../lib/stacks/api-gateway-stack";
+import { FrontendStack } from "../lib/stacks/frontend-stack";
 
 const app = new cdk.App();
 
@@ -80,3 +86,63 @@ new DocumentDbStack(app, "DocumentDbStack", {
   kmsKey: secrets.kms,
   ecsTaskSecurityGroup: application.ecsTaskSg,
 });
+
+const streamingStorage = new StreamingStorageStack(
+  app,
+  "StreamingStorageStack",
+  {
+    env,
+    description: "S3 bucket for Firehose staging and backup",
+    component,
+  },
+);
+
+const redshift = new RedshiftStack(app, "RedshiftStack", {
+  env,
+  description: "Redshift Serverless for GrowthBook analytics data source",
+  component,
+  vpc: core.vpc.vpc,
+});
+redshift.addDependency(core);
+
+const firehose = new FirehoseStack(app, "FirehoseStack", {
+  env,
+  description:
+    "Firehose delivery streams: analytics events and experiment activations → Redshift",
+  component,
+  firehoseBackupBucket: streamingStorage.firehoseBackupBucket,
+  redshiftEndpointAddress: redshift.workgroupEndpointAddress,
+  redshiftDatabaseName: redshift.databaseName,
+  redshiftAdminSecret: redshift.adminSecret,
+});
+firehose.addDependency(streamingStorage);
+firehose.addDependency(redshift);
+
+const appLambdas = new ApplicationLambdasStack(app, "ApplicationLambdasStack", {
+  env,
+  description: "Lambda functions for events and orders fact table producers",
+  component,
+  eventsFirehoseStreamName: firehose.eventsFirehoseStreamName,
+  ordersFirehoseStreamName: firehose.ordersFirehoseStreamName,
+});
+appLambdas.addDependency(firehose);
+
+const api = new ApiGatewayStack(app, "ApiGatewayStack", {
+  env,
+  description:
+    "REST API for streaming events and orders to Redshift fact tables",
+  component,
+  eventsLambda: appLambdas.eventsLambda,
+  ordersLambda: appLambdas.ordersLambda,
+});
+api.addDependency(appLambdas);
+
+const frontend = new FrontendStack(app, "FrontendStack", {
+  env,
+  description: "Demo site for streaming events to GrowthBook",
+  component,
+  apiUrl: api.api.url,
+  domainName: app.node.tryGetContext("frontendDomainName"),
+  certificateArn: app.node.tryGetContext("frontendCertificateArn"),
+});
+frontend.addDependency(api);
