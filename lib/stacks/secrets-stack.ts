@@ -6,13 +6,13 @@ import type { BaseStackProps } from "../shared/types";
 export interface SecretsStackProps extends BaseStackProps {}
 
 export class SecretsStack extends cdk.Stack {
-  public readonly kms;
+  public readonly kms: cdk.aws_kms.Key;
   public readonly component: string;
-  public readonly growthbookMongoDBStringParameter;
-  public readonly growthbookEncryptionKeyParameter;
-  public readonly growthbookJWTParameter;
-  public readonly growthbookEmailUsernameParameter;
-  public readonly growthbookEmailPasswordParameter;
+  public readonly growthbookMongoDBStringParameter: cdk.aws_ssm.StringParameter;
+  public readonly growthbookEncryptionKeyParameter: cdk.aws_ssm.StringParameter;
+  public readonly growthbookJWTParameter: cdk.aws_ssm.StringParameter;
+  public readonly growthbookEmailUsernameParameter: cdk.aws_ssm.StringParameter;
+  public readonly growthbookEmailPasswordParameter: cdk.aws_ssm.StringParameter;
 
   constructor(scope: Construct, id: string, props: SecretsStackProps = {}) {
     super(scope, id, props);

@@ -1,5 +1,8 @@
 {
   "name": "events-producer",
   "version": "1.0.0",
-  "dependencies": {}
+  "dependencies": {},
+  "devDependencies": {
+    "@aws-sdk/client-firehose": "^3.0.0"
+  }
 }

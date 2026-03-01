@@ -12,6 +12,7 @@ export interface FrontendConstructProps {
   apiUrl: string;
   domainName?: string;
   certificateArn?: string;
+  apiKey?: string;
 }
 
 export class FrontendConstruct extends Construct {
@@ -28,6 +29,7 @@ export class FrontendConstruct extends Construct {
       apiUrl,
       domainName,
       certificateArn,
+      apiKey,
     } = props;
 
     this.websiteBucket = new s3.Bucket(this, "WebsiteBucket", {
@@ -100,6 +102,7 @@ export class FrontendConstruct extends Construct {
         eventsEndpoint: `${apiUrl}events`,
         ordersEndpoint: `${apiUrl}orders`,
         healthEndpoint: `${apiUrl}health`,
+        ...(apiKey ? { apiKey } : {}),
       },
     };
 

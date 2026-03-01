@@ -1,4 +1,5 @@
 import * as cdk from "aws-cdk-lib";
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as firehose from "aws-cdk-lib/aws-kinesisfirehose";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -40,8 +41,8 @@ export class FirehoseStack extends cdk.Stack {
 
     const jdbcUrl = `jdbc:redshift://${redshiftEndpointAddress}:5439/${redshiftDatabaseName}`;
     const adminPassword = redshiftAdminSecret
-      .secretValueFromJson("password")
-      .unsafeUnwrap();
+      .secretValueFromJson('password')
+      .toString();
 
     const eventsLogGroup = new logs.LogGroup(this, "EventsFirehoseLogs", {
       logGroupName: `/aws/kinesisfirehose/${component}-events-${uniqueSuffix}`,
@@ -152,6 +153,28 @@ export class FirehoseStack extends cdk.Stack {
     ordersStream.node.addDependency(ordersLogStream);
     ordersStream.node.addDependency(firehoseIam.firehoseRole);
     ordersStream.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
+
+    for (const [id, streamName] of [
+      ['Events', this.eventsFirehoseStreamName],
+      ['Orders', this.ordersFirehoseStreamName],
+    ] as const) {
+      new cloudwatch.Alarm(this, `${id}DeliveryFreshnessAlarm`, {
+        alarmName: `${streamName}-delivery-stalled`,
+        alarmDescription: `${id} Firehose delivery to Redshift is stalled (oldest buffered record > 5 min)`,
+        metric: new cloudwatch.Metric({
+          namespace: 'AWS/Firehose',
+          metricName: 'DeliveryToRedshift.DataFreshness',
+          dimensionsMap: { DeliveryStreamName: streamName },
+          statistic: 'Maximum',
+          period: cdk.Duration.minutes(5),
+        }),
+        threshold: 300,
+        evaluationPeriods: 2,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
+    }
 
     new cdk.CfnOutput(this, "EventsFirehoseStreamName", {
       value: this.eventsFirehoseStreamName,

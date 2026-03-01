@@ -9,6 +9,7 @@ export interface FrontendStackProps extends BaseStackProps {
   apiUrl: string;
   domainName?: string;
   certificateArn?: string;
+  apiKey?: string;
 }
 
 export class FrontendStack extends cdk.Stack {
@@ -20,6 +21,7 @@ export class FrontendStack extends cdk.Stack {
       apiUrl,
       domainName,
       certificateArn,
+      apiKey,
     } = props;
     const uniqueSuffix = makeUniqueSuffix(this);
 
@@ -29,6 +31,7 @@ export class FrontendStack extends cdk.Stack {
       apiUrl,
       domainName,
       certificateArn,
+      apiKey,
     });
   }
 }

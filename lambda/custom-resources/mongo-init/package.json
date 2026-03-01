@@ -1,0 +1,10 @@
+{
+  "name": "mongo-init",
+  "version": "1.0.0",
+  "dependencies": {},
+  "devDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@aws-sdk/client-ssm": "^3.0.0",
+    "@aws-sdk/client-ecs": "^3.0.0"
+  }
+}

@@ -14,6 +14,7 @@ import { FirehoseStack } from "../lib/stacks/firehose-stack";
 import { ApplicationLambdasStack } from "../lib/stacks/application-lambdas-stack";
 import { ApiGatewayStack } from "../lib/stacks/api-gateway-stack";
 import { FrontendStack } from "../lib/stacks/frontend-stack";
+import { AutomationStack } from "../lib/stacks/automation-stack";
 
 const app = new cdk.App();
 
@@ -28,6 +29,9 @@ const env = {
 
 const component = app.node.tryGetContext("component") || "growthbook-platform";
 const domain = app.node.tryGetContext("domain") || "";
+const frontendDomainName: string | undefined =
+  app.node.tryGetContext("frontendDomainName");
+const apiKey: string | undefined = app.node.tryGetContext("apiKey");
 
 const core = new CoreNetworkStack(app, "CoreNetworkStack", {
   env,
@@ -78,7 +82,7 @@ const application = new ApplicationStack(app, "ApplicationStack", {
   emailPasswordParameter: secrets.growthbookEmailPasswordParameter,
 });
 
-new DocumentDbStack(app, "DocumentDbStack", {
+const docdb = new DocumentDbStack(app, "DocumentDbStack", {
   env,
   description: "DocumentDB cluster for GrowthBook",
   component,
@@ -134,6 +138,7 @@ const api = new ApiGatewayStack(app, "ApiGatewayStack", {
   component,
   eventsLambda: appLambdas.eventsLambda,
   ordersLambda: appLambdas.ordersLambda,
+  corsOrigin: frontendDomainName ? `https://${frontendDomainName}` : undefined,
 });
 api.addDependency(appLambdas);
 
@@ -142,7 +147,33 @@ const frontend = new FrontendStack(app, "FrontendStack", {
   description: "Demo site for streaming events to GrowthBook",
   component,
   apiUrl: api.api.url,
-  domainName: app.node.tryGetContext("frontendDomainName"),
+  domainName: frontendDomainName,
   certificateArn: app.node.tryGetContext("frontendCertificateArn"),
+  apiKey,
 });
 frontend.addDependency(api);
+
+const automation = new AutomationStack(app, "AutomationStack", {
+  env,
+  description: "Custom resources: auto-generate secrets, init Mongo/Redshift",
+  component,
+  encryptionKeyParameterArn:
+    secrets.growthbookEncryptionKeyParameter.parameterArn,
+  encryptionKeyParameterName:
+    secrets.growthbookEncryptionKeyParameter.parameterName,
+  jwtParameterArn: secrets.growthbookJWTParameter.parameterArn,
+  jwtParameterName: secrets.growthbookJWTParameter.parameterName,
+  docdbSecretArn: docdb.cluster.secret!.secretArn,
+  docdbEndpoint: docdb.cluster.clusterEndpoint.hostname,
+  mongoDbParameterArn: secrets.growthbookMongoDBStringParameter.parameterArn,
+  mongoDbParameterName: secrets.growthbookMongoDBStringParameter.parameterName,
+  ecsClusterArn: application.ecsCluster.clusterArn,
+  ecsServiceName: "growthbook",
+  redshiftWorkgroupName: redshift.workgroupName,
+  redshiftDatabase: redshift.databaseName,
+  redshiftAdminSecretArn: redshift.adminSecret.secretArn,
+  redshiftUserSecretArn: redshift.growthbookUserSecret.secretArn,
+});
+automation.addDependency(docdb);
+automation.addDependency(application);
+automation.addDependency(redshift);

@@ -202,6 +202,16 @@ export class ApplicationStack extends cdk.Stack {
       circuitBreaker: { rollback: true },
     });
 
+    const scaling = ecsService.autoScaleTaskCount({
+      minCapacity: 1,
+      maxCapacity: 4,
+    });
+    scaling.scaleOnCpuUtilization("CpuScaling", {
+      targetUtilizationPercent: 70,
+      scaleInCooldown: cdk.Duration.seconds(120),
+      scaleOutCooldown: cdk.Duration.seconds(60),
+    });
+
     appTargetGroup.addTarget(
       ecsService.loadBalancerTarget({
         containerName: "growthbook",

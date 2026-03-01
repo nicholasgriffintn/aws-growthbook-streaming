@@ -6,7 +6,7 @@ import type { BaseStackProps } from "../shared/types";
 export interface ECRStackProps extends BaseStackProps {}
 
 export class ECRStack extends cdk.Stack {
-  public readonly growthbookEcrRepository;
+  public readonly growthbookEcrRepository: cdk.aws_ecr.Repository;
 
   constructor(scope: Construct, id: string, props: ECRStackProps = {}) {
     super(scope, id, props);

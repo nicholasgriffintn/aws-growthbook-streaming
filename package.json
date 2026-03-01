@@ -10,13 +10,16 @@
     "diff": "cdk diff",
     "synth": "cdk synth",
     "bootstrap": "cdk bootstrap",
-    "nag": "cdk-nag"
+    "nag": "cdk-nag",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@types/node": "25.3.0",
     "aws-cdk": "2.1106.1",
     "cdk-nag": "2.37.55",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^4.0.18"
   },
   "dependencies": {
     "aws-cdk-lib": "2.239.0",

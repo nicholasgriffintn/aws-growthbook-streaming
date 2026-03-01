@@ -46,20 +46,21 @@ graph TD
     FH -->|"COPY"| RS
 ```
 
-| Stack                     | Purpose                                                              |
-| ------------------------- | -------------------------------------------------------------------- |
-| `CoreNetworkStack`        | VPC, 3 AZs, public/private subnets, NAT gateway, VPC endpoints       |
-| `SecretsStack`            | KMS key + SSM parameter stubs                                        |
-| `IamStack`                | ECS task/execution role scoped to SSM parameters + KMS key           |
-| `ECRStack`                | ECR repository for the GrowthBook image                              |
-| `ApplicationStack`        | ECS cluster, task definition, ALB, target groups, Route 53 records   |
-| `DocumentDbStack`         | DocumentDB cluster (TLS, KMS encrypted, deletion protection)         |
-| `StreamingStorageStack`   | S3 bucket for Firehose staging and backup                            |
-| `RedshiftStack`           | Redshift Serverless namespace + workgroup, admin secret              |
-| `FirehoseStack`           | Two Firehose delivery streams → Redshift (fact_events + fact_orders) |
-| `ApplicationLambdasStack` | Lambda functions that put records to Firehose                        |
-| `ApiGatewayStack`         | REST API exposing `/events`, `/orders`, `/health`                    |
-| `FrontendStack`           | S3 + CloudFront demo site                                            |
+| Stack                     | Purpose                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------ |
+| `CoreNetworkStack`        | VPC, 3 AZs, public/private subnets, NAT gateway, VPC endpoints                 |
+| `SecretsStack`            | KMS key + SSM parameter stubs                                                  |
+| `IamStack`                | ECS task/execution role scoped to SSM parameters + KMS key                     |
+| `ECRStack`                | ECR repository for the GrowthBook image                                        |
+| `ApplicationStack`        | ECS cluster, task definition, ALB, target groups, Route 53 records             |
+| `DocumentDbStack`         | DocumentDB cluster (TLS, KMS encrypted, deletion protection)                   |
+| `StreamingStorageStack`   | S3 bucket for Firehose staging and backup                                      |
+| `RedshiftStack`           | Redshift Serverless namespace + workgroup, admin + growthbook_user secrets     |
+| `FirehoseStack`           | Two Firehose delivery streams → Redshift (fact_events + fact_orders)           |
+| `ApplicationLambdasStack` | Lambda functions that put records to Firehose                                  |
+| `ApiGatewayStack`         | REST API exposing `/events`, `/orders`, `/health`                              |
+| `FrontendStack`           | S3 + CloudFront demo site                                                      |
+| `AutomationStack`         | CDK custom resources: generate secrets, init MongoDB connection, init Redshift |
 
 ## Setup
 
@@ -82,75 +83,49 @@ docker push ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/growthbook:latest
 pnpm cdk deploy --all --context domain=<REPLACE_WITH_DOMAIN>
 ```
 
-### 3. Populate SSM parameters
+### 3. Wire the API key to the demo frontend
 
-After `SecretsStack` deploys, update the placeholder values:
-
-```sh
-aws ssm put-parameter --name "/growthbook/production/encryptionKey" --value "<REPLACE_WITH_ENCRYPTION_KEY>" --type String --overwrite
-aws ssm put-parameter --name "/growthbook/production/jwt" --value "<REPLACE_WITH_JWT>" --type String --overwrite
-aws ssm put-parameter --name "/growthbook/production/email/username" --value "<REPLACE_WITH_EMAIL_USERNAME>" --type String --overwrite
-aws ssm put-parameter --name "/growthbook/production/email/password" --value "<REPLACE_WITH_EMAIL_PASSWORD>" --type String --overwrite
-```
-
-### 4. Update the MongoDB connection string
-
-After `DocumentDbStack` deploys, copy the cluster endpoint from the CloudFormation output. The DocumentDB master password is in Secrets Manager under `growthbook-platform/docdb-master-credentials`.
+The `/events` and `/orders` endpoints require an API key. After the first deploy, retrieve the key value and redeploy `FrontendStack` with it so the demo site can send requests:
 
 ```sh
-aws ssm put-parameter \
-  --name "/growthbook/production/documentdb/dbstring" \
-  --value "mongodb://docdbAdmin:<REPLACE_WITH_DOCDB_PASSWORD>@CLUSTER_ENDPOINT:27017/growthbook?tls=true&tlsCAFile=/etc/pki/tls/certs/ca-bundle.crt&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false" \
-  --type String --overwrite
+KEY_ID=$(aws cloudformation describe-stacks --stack-name ApiGatewayStack \
+  --query 'Stacks[0].Outputs[?OutputKey==`ApiKeyId`].OutputValue' --output text)
+
+API_KEY=$(aws apigateway get-api-key --api-key-id "$KEY_ID" --include-value \
+  --query value --output text)
+
+pnpm cdk deploy FrontendStack \
+  --context domain=<REPLACE_WITH_DOMAIN> \
+  --context apiKey="$API_KEY"
 ```
 
-Force a new deployment to pick up the updated parameter:
+### 4. Set email credentials
+
+`AutomationStack` auto-generates `ENCRYPTION_KEY`, `JWT_SECRET`, and the MongoDB connection string on first deploy. The only values you still need to set manually are the SES SMTP credentials:
 
 ```sh
-aws ecs update-service --cluster CLUSTER_NAME --service growthbook --force-new-deployment
+aws ssm put-parameter --name "/growthbook/production/email/username" --value "<SES_SMTP_USERNAME>" --type String --overwrite
+aws ssm put-parameter --name "/growthbook/production/email/password" --value "<SES_SMTP_PASSWORD>" --type String --overwrite
 ```
 
-Then wait for the deployment to finish before accessing the app at `https://growthbook.{domain}`.
+After updating these, force a new ECS deployment to pick them up:
 
-### 5. Configure the Redshift cluster
-
-After `RedshiftStack` deploys, connect via Redshift Query Editor using the admin credentials from Secrets Manager (`/{component}/redshift/admin`). Run:
-
-```sql
-CREATE SCHEMA IF NOT EXISTS experimentation;
-
-CREATE TABLE IF NOT EXISTS experimentation.fact_events (
-  event_id    VARCHAR(36),
-  user_id     VARCHAR(255),
-  anonymous_id VARCHAR(255),
-  timestamp   TIMESTAMP,
-  event_type  VARCHAR(255),
-  page_path   VARCHAR(1024),
-  session_id  VARCHAR(36),
-  device_type VARCHAR(50),
-  properties  VARCHAR(MAX)
-);
-
-CREATE TABLE IF NOT EXISTS experimentation.fact_orders (
-  order_id    VARCHAR(36),
-  user_id     VARCHAR(255),
-  anonymous_id VARCHAR(255),
-  timestamp   TIMESTAMP,
-  amount      FLOAT8,
-  currency    VARCHAR(3),
-  device_type VARCHAR(50),
-  coupon_code VARCHAR(100)
-);
-
-CREATE USER growthbook_user WITH PASSWORD '<REPLACE_ME>';
-GRANT USAGE ON SCHEMA experimentation TO growthbook_user;
-GRANT SELECT ON ALL TABLES IN SCHEMA experimentation TO growthbook_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA experimentation GRANT SELECT ON TABLES TO growthbook_user;
+```sh
+aws ecs update-service --cluster <CLUSTER_NAME> --service growthbook --force-new-deployment
 ```
 
-### 6. Connect GrowthBook to Redshift
+### 5. Connect GrowthBook to Redshift
 
 In GrowthBook, go to **Settings → Data Sources → Add Data Source → Redshift**.
+
+Retrieve the `growthbook_user` password from Secrets Manager:
+
+```sh
+aws secretsmanager get-secret-value \
+  --secret-id $(aws cloudformation describe-stacks --stack-name RedshiftStack \
+    --query 'Stacks[0].Outputs[?OutputKey==`GrowthbookUserSecretArn`].OutputValue' --output text) \
+  --query SecretString --output text | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])"
+```
 
 Use the workgroup endpoint from the `RedshiftStack` CloudFormation output (`WorkgroupEndpoint`):
 
@@ -160,10 +135,10 @@ Use the workgroup endpoint from the `RedshiftStack` CloudFormation output (`Work
 | Port     | `5439`                                  |
 | Database | `analytics`                             |
 | User     | `growthbook_user`                       |
-| Password | password set in step 5                  |
+| Password | retrieved from Secrets Manager (above)  |
 | Schema   | `experimentation`                       |
 
-### 7. Create GrowthBook fact tables
+### 6. Create GrowthBook fact tables
 
 After connecting the data source, create two fact tables in GrowthBook (**Data Sources → [your source] → Add Fact Table**):
 
@@ -204,4 +179,25 @@ pnpm cdk destroy --all
 
 ## Pricing
 
-TODO
+Rough monthly estimates at low-to-moderate load (eu-west-1, on-demand pricing). Treat these as order-of-magnitude; actual costs depend on traffic and data volume.
+
+| Service             | Config                           | Est. cost/month                    |
+| ------------------- | -------------------------------- | ---------------------------------- |
+| ECS Fargate         | 0.25 vCPU / 0.5 GB, 1 task 24/7  | ~$9                                |
+| DocumentDB          | db.t3.medium, 1 instance         | ~$60                               |
+| Redshift Serverless | 8 RPU base capacity              | ~$175 idle, scales with query time |
+| ALB                 | 1 LCU/hr baseline                | ~$20                               |
+| NAT Gateway         | 1 AZ, low traffic                | ~$35                               |
+| Kinesis Firehose    | 2 streams, ~1M records/day       | ~$3                                |
+| API Gateway         | REST, ~1M requests/day           | ~$3.50                             |
+| Lambda              | 2 functions, ~1M invocations/day | ~$2                                |
+| S3                  | Firehose backup + frontend       | < $1                               |
+| CloudFront          | Low traffic                      | < $1                               |
+| CloudWatch          | Logs, alarms across all streams  | ~$2                                |
+| **Total**           |                                  | **~$315/month**                    |
+
+The dominant costs are DocumentDB (~19%) and Redshift (~55%). To reduce spend:
+
+- Replace DocumentDB with MongoDB Atlas free tier and remove the cluster entirely
+- Scale Redshift RPUs down to 4 if query performance allows
+- Remove the NAT Gateway by adding VPC endpoints for the remaining services

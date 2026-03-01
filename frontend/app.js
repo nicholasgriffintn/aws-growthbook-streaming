@@ -39,19 +39,11 @@ class StreamingDemo {
   }
 
   async loadConfig() {
-    try {
-      const response = await fetch("/config.json");
-      this.config = await response.json();
-    } catch {
-      this.config = {
-        api: {
-          baseUrl: "http://localhost:3000/",
-          eventsEndpoint: "http://localhost:3000/events",
-          ordersEndpoint: "http://localhost:3000/orders",
-          healthEndpoint: "http://localhost:3000/health",
-        },
-      };
+    const response = await fetch("/config.json");
+    if (!response.ok) {
+      throw new Error(`Failed to load config.json: ${response.status}`);
     }
+    this.config = await response.json();
   }
 
   setupCanvas() {
@@ -181,11 +173,17 @@ class StreamingDemo {
     }
   }
 
+  apiHeaders() {
+    const headers = { "Content-Type": "application/json" };
+    if (this.config.api.apiKey) headers["x-api-key"] = this.config.api.apiKey;
+    return headers;
+  }
+
   async postEvent(payload) {
     try {
       const res = await fetch(this.config.api.eventsEndpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: this.apiHeaders(),
         body: JSON.stringify(payload),
       });
       if (res.ok) {
@@ -204,7 +202,7 @@ class StreamingDemo {
     try {
       const res = await fetch(this.config.api.ordersEndpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: this.apiHeaders(),
         body: JSON.stringify(payload),
       });
       if (res.ok) {
