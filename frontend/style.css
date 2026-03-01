@@ -390,6 +390,61 @@ button:active {
   transform: scale(0.98);
 }
 
+.btn-secondary {
+  background: transparent;
+  color: var(--primary-color);
+  border: 1px solid var(--primary-color);
+}
+.btn-secondary:hover {
+  background: var(--primary-color);
+  color: white;
+}
+.btn-secondary.active {
+  background: var(--error);
+  border-color: var(--error);
+  color: white;
+}
+.btn-secondary.active:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+.sim-buttons {
+  display: flex;
+  gap: 8px;
+}
+.sim-buttons button {
+  flex: 1;
+}
+
+.notifications {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1000;
+}
+
+.notification {
+  padding: 12px 20px;
+  border-radius: 6px;
+  color: white;
+  font-weight: 500;
+  font-size: 14px;
+  animation: slideIn 0.3s ease;
+}
+.notification-success {
+  background: var(--success);
+}
+.notification-error {
+  background: var(--error);
+}
+.notification-info {
+  background: #2563eb;
+}
+
 #experimentStatus p {
   margin-bottom: 8px;
   font-size: 14px;

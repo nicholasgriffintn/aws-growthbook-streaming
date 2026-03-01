@@ -25,8 +25,8 @@ graph TD
     ECS["ECS Fargate (GrowthBook)\nprivate subnet"]
     DDB["DocumentDB\nprivate subnet · TLS · KMS encrypted"]
     CF["CloudFront\nDemo site"]
-    APIGW["API Gateway\n/analytics · /experiment"]
-    LMB["Lambda\nanalytics · experiment"]
+    APIGW["API Gateway\n/events · /orders"]
+    LMB["Lambda\nevents · orders"]
     FH["Kinesis Firehose\n2 delivery streams"]
     RS["Redshift Serverless\nprivate subnet"]
     S3["S3\nFirehose staging/backup"]
@@ -46,20 +46,20 @@ graph TD
     FH -->|"COPY"| RS
 ```
 
-| Stack                     | Purpose                                                            |
-| ------------------------- | ------------------------------------------------------------------ |
-| `CoreNetworkStack`        | VPC, 3 AZs, public/private subnets, NAT gateway, VPC endpoints     |
-| `SecretsStack`            | KMS key + SSM parameter stubs                                      |
-| `IamStack`                | ECS task/execution role scoped to SSM parameters + KMS key         |
-| `ECRStack`                | ECR repository for the GrowthBook image                            |
-| `ApplicationStack`        | ECS cluster, task definition, ALB, target groups, Route 53 records |
-| `DocumentDbStack`         | DocumentDB cluster (TLS, KMS encrypted, deletion protection)       |
-| `StreamingStorageStack`   | S3 bucket for Firehose staging and backup                          |
-| `RedshiftStack`           | Redshift Serverless namespace + workgroup, admin secret            |
-| `FirehoseStack`           | Two Firehose delivery streams → Redshift (analytics + experiment)  |
-| `ApplicationLambdasStack` | Lambda functions that put records to Firehose                      |
-| `ApiGatewayStack`         | REST API exposing `/analytics`, `/experiment`, `/health`           |
-| `FrontendStack`           | S3 + CloudFront demo site                                          |
+| Stack                     | Purpose                                                              |
+| ------------------------- | -------------------------------------------------------------------- |
+| `CoreNetworkStack`        | VPC, 3 AZs, public/private subnets, NAT gateway, VPC endpoints       |
+| `SecretsStack`            | KMS key + SSM parameter stubs                                        |
+| `IamStack`                | ECS task/execution role scoped to SSM parameters + KMS key           |
+| `ECRStack`                | ECR repository for the GrowthBook image                              |
+| `ApplicationStack`        | ECS cluster, task definition, ALB, target groups, Route 53 records   |
+| `DocumentDbStack`         | DocumentDB cluster (TLS, KMS encrypted, deletion protection)         |
+| `StreamingStorageStack`   | S3 bucket for Firehose staging and backup                            |
+| `RedshiftStack`           | Redshift Serverless namespace + workgroup, admin secret              |
+| `FirehoseStack`           | Two Firehose delivery streams → Redshift (fact_events + fact_orders) |
+| `ApplicationLambdasStack` | Lambda functions that put records to Firehose                        |
+| `ApiGatewayStack`         | REST API exposing `/events`, `/orders`, `/health`                    |
+| `FrontendStack`           | S3 + CloudFront demo site                                            |
 
 ## Setup
 
