@@ -8,8 +8,17 @@ const PAGE_PATHS = [
   "/account",
 ];
 const DEVICE_TYPES = ["desktop", "mobile", "tablet"];
+const COUNTRIES = ["GB", "US", "DE", "FR"];
+const REFERRERS = [
+  "https://search.example/",
+  "https://newsletter.example/",
+  "https://partner.example/",
+  "https://social.example/",
+];
 const COUPON_CODES = [null, null, null, "SAVE10", "WELCOME20"];
 const ORDER_AMOUNTS = [19.99, 29.99, 49.99, 79.99, 99.99, 149.99, 199.99];
+const VISITOR_STORAGE_KEY = "growthbook-demo-visitor";
+const ASSIGNMENT_STORAGE_PREFIX = "growthbook-demo-assignment:";
 
 class StreamingDemo {
   constructor() {
@@ -24,17 +33,25 @@ class StreamingDemo {
     this.timelineCanvasDisplayWidth = 0;
     this.timelineCanvasDisplayHeight = 0;
     this.timelineCategoryColors = {
-      event: "#10b981",
-      order: "#7c3aed",
+      event: "#0f766e",
+      exposure: "#dc2626",
+      feature: "#d97706",
+      order: "#1d4ed8",
     };
+    this.visitor = null;
 
     this.init();
   }
 
   async init() {
     await this.loadConfig();
+    this.initialiseVisitor();
     this.setupCanvas();
     this.setupEventListeners();
+    this.syncExperimentForm();
+    this.renderVisitor();
+    this.refreshAssignmentPreview();
+    this.renderGrowthBookStatus();
     this.checkApiHealth();
   }
 
@@ -43,12 +60,36 @@ class StreamingDemo {
     if (!response.ok) {
       throw new Error(`Failed to load config.json: ${response.status}`);
     }
+
     this.config = await response.json();
+  }
+
+  get growthbookConfig() {
+    return (
+      this.config?.growthbook ?? {
+        assignmentView: "experimentation.experiment_assignments",
+        featureUsageView: "experimentation.feature_usage",
+        sessionMetricsView: "experimentation.session_metrics",
+        checkoutFunnelView: "experimentation.checkout_funnel",
+        userDayMetricsView: "experimentation.user_day_metrics",
+        demoExperiment: {
+          key: "checkout-layout-aa",
+          featureKey: "checkout-layout",
+          variations: [
+            { id: "0", label: "classic", value: "classic", conversionMultiplier: 1 },
+            { id: "1", label: "modern", value: "modern", conversionMultiplier: 1 },
+          ],
+        },
+      }
+    );
   }
 
   setupCanvas() {
     this.timelineCanvas = document.getElementById("eventTimelineChart");
-    if (!this.timelineCanvas) return;
+    if (!this.timelineCanvas) {
+      return;
+    }
+
     this.timelineCtx = this.timelineCanvas.getContext("2d");
     this.resizeCanvas();
     window.addEventListener("resize", () => this.resizeCanvas());
@@ -86,128 +127,358 @@ class StreamingDemo {
     document
       .getElementById("sendOrderBtn")
       ?.addEventListener("click", () => this.sendManualOrder());
+    document
+      .getElementById("sendExposureBtn")
+      ?.addEventListener("click", () => this.sendExposureEvent());
+    document
+      .getElementById("sendFeatureUsageBtn")
+      ?.addEventListener("click", () => this.sendFeatureUsageEvent());
+    document
+      .getElementById("refreshVisitorBtn")
+      ?.addEventListener("click", () => this.replaceVisitor());
+    document
+      .getElementById("newSessionBtn")
+      ?.addEventListener("click", () => this.startNewSession());
+
+    for (const id of [
+      "visitorUserId",
+      "visitorAnonymousId",
+      "visitorSessionId",
+      "visitorDeviceType",
+      "visitorCountry",
+      "visitorReferrer",
+      "visitorLoggedIn",
+    ]) {
+      document.getElementById(id)?.addEventListener("change", () => {
+        this.updateVisitorFromForm();
+      });
+    }
+
+    for (const id of ["experimentKey", "featureKey", "variationId", "featureValue"]) {
+      document.getElementById(id)?.addEventListener("change", () => {
+        this.refreshAssignmentPreview();
+      });
+    }
   }
 
-  generateRandomString(length) {
-    const chars = "0123456789abcdefghijklmnopqrstuvwxyz";
-    let result = "";
+  initialiseVisitor() {
+    const saved = this.readJsonFromStorage(VISITOR_STORAGE_KEY);
+    this.visitor = this.normaliseVisitor(saved) ?? this.createVisitor();
+    this.persistVisitor();
+  }
 
-    const cryptoObj =
-      (typeof window !== "undefined" && window.crypto) ||
-      (typeof self !== "undefined" && self.crypto) ||
-      null;
+  createVisitor(overrides = {}) {
+    return {
+      userId: this.randomUserId(),
+      anonymousId: `anon_${this.generateRandomString(9)}`,
+      sessionId: this.randomSessionId(),
+      deviceType: this.randomDeviceType(),
+      country: this.randomCountry(),
+      referrer: this.randomReferrer(),
+      loggedIn: Math.random() < 0.45,
+      ...overrides,
+    };
+  }
 
-    if (cryptoObj && typeof cryptoObj.getRandomValues === "function") {
-      const bytes = new Uint8Array(length);
-      cryptoObj.getRandomValues(bytes);
-      for (let i = 0; i < length; i++) {
-        result += chars[bytes[i] % chars.length];
-      }
+  normaliseVisitor(visitor) {
+    if (!visitor || typeof visitor !== "object") {
+      return null;
+    }
+
+    return {
+      userId: visitor.userId || this.randomUserId(),
+      anonymousId: visitor.anonymousId || `anon_${this.generateRandomString(9)}`,
+      sessionId: visitor.sessionId || this.randomSessionId(),
+      deviceType: DEVICE_TYPES.includes(visitor.deviceType)
+        ? visitor.deviceType
+        : this.randomDeviceType(),
+      country: COUNTRIES.includes(visitor.country)
+        ? visitor.country
+        : this.randomCountry(),
+      referrer: visitor.referrer || this.randomReferrer(),
+      loggedIn: Boolean(visitor.loggedIn),
+    };
+  }
+
+  replaceVisitor() {
+    this.visitor = this.createVisitor();
+    this.persistVisitor();
+    this.renderVisitor();
+    this.refreshAssignmentPreview();
+  }
+
+  startNewSession() {
+    this.visitor = {
+      ...this.visitor,
+      sessionId: this.randomSessionId(),
+    };
+    this.persistVisitor();
+    this.renderVisitor();
+    this.refreshAssignmentPreview();
+  }
+
+  updateVisitorFromForm() {
+    this.visitor = this.normaliseVisitor({
+      userId: document.getElementById("visitorUserId")?.value,
+      anonymousId: document.getElementById("visitorAnonymousId")?.value,
+      sessionId: document.getElementById("visitorSessionId")?.value,
+      deviceType: document.getElementById("visitorDeviceType")?.value,
+      country: document.getElementById("visitorCountry")?.value,
+      referrer: document.getElementById("visitorReferrer")?.value,
+      loggedIn: document.getElementById("visitorLoggedIn")?.checked,
+    });
+    this.persistVisitor();
+    this.refreshAssignmentPreview();
+  }
+
+  renderVisitor() {
+    if (!this.visitor) {
+      return;
+    }
+
+    document.getElementById("visitorUserId").value = this.visitor.userId;
+    document.getElementById("visitorAnonymousId").value = this.visitor.anonymousId;
+    document.getElementById("visitorSessionId").value = this.visitor.sessionId;
+    document.getElementById("visitorDeviceType").value = this.visitor.deviceType;
+    document.getElementById("visitorCountry").value = this.visitor.country;
+    document.getElementById("visitorReferrer").value = this.visitor.referrer;
+    document.getElementById("visitorLoggedIn").checked = this.visitor.loggedIn;
+  }
+
+  persistVisitor() {
+    window.localStorage.setItem(
+      VISITOR_STORAGE_KEY,
+      JSON.stringify(this.visitor),
+    );
+  }
+
+  syncExperimentForm() {
+    const experiment = this.growthbookConfig.demoExperiment;
+    const assignment = this.getAssignmentForVisitor(this.visitor, experiment.key);
+
+    document.getElementById("experimentKey").value = experiment.key;
+    document.getElementById("featureKey").value = experiment.featureKey;
+    document.getElementById("variationId").value = assignment.id;
+    document.getElementById("featureValue").value = assignment.value;
+  }
+
+  renderGrowthBookStatus() {
+    const status = document.getElementById("growthbookStatus");
+    const appLink = document.getElementById("growthbookAppLink");
+    const copy = document.getElementById("growthbookCopy");
+    const assignmentViewPill = document.getElementById("assignmentViewPill");
+    const featureViewPill = document.getElementById("featureViewPill");
+
+    assignmentViewPill.textContent = `Assignments: ${this.growthbookConfig.assignmentView}`;
+    featureViewPill.textContent = `Features: ${this.growthbookConfig.featureUsageView}`;
+
+    if (copy) {
+      copy.textContent =
+        "The demo emits experiment exposure and feature usage events with dimensions so GrowthBook can query Redshift for assignments, funnels, and user-day metrics.";
+    }
+
+    if (this.growthbookConfig.appUrl) {
+      status.textContent = "Configured";
+      status.className = "status-value connected";
+      appLink.href = this.growthbookConfig.appUrl;
+      appLink.classList.remove("hidden");
+      appLink.textContent = "Open GrowthBook app";
     } else {
-      // Fallback: preserve behavior if crypto is unavailable.
-      while (result.length < length) {
-        result += Math.random().toString(36).substr(2);
-      }
-      result = result.slice(0, length);
+      status.textContent = "Warehouse ready";
+      status.className = "status-value connecting";
+      appLink.classList.add("hidden");
+    }
+  }
+
+  refreshAssignmentPreview() {
+    const experimentKey =
+      document.getElementById("experimentKey")?.value ||
+      this.growthbookConfig.demoExperiment.key;
+    const featureKey =
+      document.getElementById("featureKey")?.value ||
+      this.growthbookConfig.demoExperiment.featureKey;
+    const assignment = this.getAssignmentForVisitor(this.visitor, experimentKey);
+    const manualVariation = document.getElementById("variationId")?.value;
+    const manualFeatureValue = document.getElementById("featureValue")?.value;
+
+    document.getElementById("variationId").value = manualVariation || assignment.id;
+    document.getElementById("featureValue").value =
+      manualFeatureValue || assignment.value;
+
+    const summary = document.getElementById("assignmentSummary");
+    const badge = document.getElementById("assignmentBadge");
+    const summaryText = `${experimentKey}: variation ${document.getElementById("variationId").value} (${featureKey}=${document.getElementById("featureValue").value})`;
+
+    summary.textContent = summaryText;
+    badge.textContent = document.getElementById("variationId").value;
+  }
+
+  getAssignmentForVisitor(visitor, experimentKey) {
+    const experiment = this.resolveExperimentConfig(experimentKey);
+    const storageKey = `${ASSIGNMENT_STORAGE_PREFIX}${experimentKey}:${visitor.userId}`;
+    const saved = this.readJsonFromStorage(storageKey);
+    if (saved && experiment.variations.some((variation) => variation.id === saved.id)) {
+      return saved;
     }
 
-    return result;
+    const bucket = this.hashToUnitInterval(`${visitor.userId}:${experimentKey}`);
+    const index = Math.min(
+      experiment.variations.length - 1,
+      Math.floor(bucket * experiment.variations.length),
+    );
+    const chosen = experiment.variations[index];
+    window.localStorage.setItem(storageKey, JSON.stringify(chosen));
+    return chosen;
   }
 
-  randomUserId() {
-    return `user_${this.generateRandomString(9)}`;
-  }
-
-  randomSessionId() {
-    const cryptoObj =
-      (typeof window !== 'undefined' && window.crypto) ||
-      (typeof globalThis !== 'undefined' && globalThis.crypto);
-    if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
-      const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz';
-      const bytes = new Uint8Array(9);
-      cryptoObj.getRandomValues(bytes);
-      let id = '';
-      for (let i = 0; i < bytes.length; i++) {
-        id += alphabet[bytes[i] % alphabet.length];
-      }
-      return `sess_${id}`;
+  resolveExperimentConfig(experimentKey) {
+    const demoExperiment = this.growthbookConfig.demoExperiment;
+    if (experimentKey === demoExperiment.key) {
+      return demoExperiment;
     }
-    // Fallback for environments without crypto.getRandomValues
-    return `sess_${this.generateRandomString(9)}`;
+
+    return {
+      key: experimentKey,
+      featureKey:
+        document.getElementById("featureKey")?.value || demoExperiment.featureKey,
+      variations: [
+        {
+          id: document.getElementById("variationId")?.value || "0",
+          label: "manual",
+          value:
+            document.getElementById("featureValue")?.value || "control",
+          conversionMultiplier: 1,
+        },
+      ],
+    };
   }
 
-  randomDeviceType() {
-    return DEVICE_TYPES[Math.floor(Math.random() * DEVICE_TYPES.length)];
+  buildVisitorPayload(visitor = this.visitor) {
+    return {
+      user_id: visitor.userId,
+      anonymous_id: visitor.anonymousId,
+      session_id: visitor.sessionId,
+      device_type: visitor.deviceType,
+      country: visitor.country,
+      referrer: visitor.referrer,
+      logged_in: visitor.loggedIn,
+    };
+  }
+
+  buildExperimentPayload(overrides = {}) {
+    return {
+      experiment_id:
+        overrides.experimentId ||
+        document.getElementById("experimentKey")?.value ||
+        this.growthbookConfig.demoExperiment.key,
+      variation_id:
+        overrides.variationId || document.getElementById("variationId")?.value,
+      feature_key:
+        overrides.featureKey ||
+        document.getElementById("featureKey")?.value ||
+        this.growthbookConfig.demoExperiment.featureKey,
+      feature_value:
+        overrides.featureValue ||
+        document.getElementById("featureValue")?.value,
+    };
   }
 
   async runBurst() {
     const count = parseInt(
       document.getElementById("simulationRate")?.value ?? "5",
+      10,
     );
     const promises = [];
+
     for (let i = 0; i < count; i++) {
       promises.push(this.simulateUserJourney());
     }
+
     await Promise.allSettled(promises);
   }
 
   async simulateUserJourney() {
-    const userId = this.randomUserId();
-    const sessionId = this.randomSessionId();
-    const deviceType = this.randomDeviceType();
+    const visitor = this.createVisitor();
+    const experiment = this.resolveExperimentConfig(
+      this.growthbookConfig.demoExperiment.key,
+    );
+    const assignment = this.getAssignmentForVisitor(visitor, experiment.key);
+    const conversionMultiplier = Number(assignment.conversionMultiplier ?? 1);
 
-    this.uniqueUsers.add(userId);
+    this.uniqueUsers.add(visitor.userId);
 
     const pageCount = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < pageCount; i++) {
       const path = PAGE_PATHS[Math.floor(Math.random() * PAGE_PATHS.length)];
       await this.postEvent({
+        ...this.buildVisitorPayload(visitor),
         event_type: "page_view",
-        user_id: userId,
-        session_id: sessionId,
-        device_type: deviceType,
         page_path: path,
       });
-      await sleep(100 + Math.random() * 200);
+      await sleep(80 + Math.random() * 120);
     }
 
-    if (Math.random() < 0.6) {
+    await this.postEvent({
+      ...this.buildVisitorPayload(visitor),
+      event_type: "experiment_viewed",
+      page_path: "/checkout",
+      ...this.buildExperimentPayload({
+        experimentId: experiment.key,
+        variationId: assignment.id,
+        featureKey: experiment.featureKey,
+        featureValue: assignment.value,
+      }),
+      properties: {
+        source: "simulator",
+      },
+    });
+
+    await this.postEvent({
+      ...this.buildVisitorPayload(visitor),
+      event_type: "feature_usage",
+      page_path: "/checkout",
+      ...this.buildExperimentPayload({
+        experimentId: experiment.key,
+        variationId: assignment.id,
+        featureKey: experiment.featureKey,
+        featureValue: assignment.value,
+      }),
+      properties: {
+        source: "simulator",
+      },
+    });
+
+    if (Math.random() < Math.min(0.6 * conversionMultiplier, 0.95)) {
       await this.postEvent({
+        ...this.buildVisitorPayload(visitor),
         event_type: "add_to_cart",
-        user_id: userId,
-        session_id: sessionId,
-        device_type: deviceType,
         page_path: "/cart",
       });
     }
 
-    if (Math.random() < 0.3) {
+    if (Math.random() < Math.min(0.3 * conversionMultiplier, 0.95)) {
       await this.postEvent({
+        ...this.buildVisitorPayload(visitor),
         event_type: "checkout_start",
-        user_id: userId,
-        session_id: sessionId,
-        device_type: deviceType,
         page_path: "/checkout",
       });
+
       const amount =
         ORDER_AMOUNTS[Math.floor(Math.random() * ORDER_AMOUNTS.length)];
       const coupon =
         COUPON_CODES[Math.floor(Math.random() * COUPON_CODES.length)];
+
       await this.postOrder({
-        user_id: userId,
-        session_id: sessionId,
-        device_type: deviceType,
+        ...this.buildVisitorPayload(visitor),
         amount,
         coupon_code: coupon,
       });
     }
 
-    if (Math.random() < 0.05) {
+    if (Math.random() < 0.08) {
       await this.postEvent({
+        ...this.buildVisitorPayload(visitor),
         event_type: "signup",
-        user_id: userId,
-        session_id: sessionId,
-        device_type: deviceType,
         page_path: "/account",
       });
     }
@@ -215,8 +486,35 @@ class StreamingDemo {
 
   apiHeaders() {
     const headers = { "Content-Type": "application/json" };
-    if (this.config.api.apiKey) headers["x-api-key"] = this.config.api.apiKey;
+    if (this.config.api.apiKey) {
+      headers["x-api-key"] = this.config.api.apiKey;
+    }
+
     return headers;
+  }
+
+  classifyEventCategory(eventType) {
+    if (eventType === "experiment_viewed" || eventType === "viewed_experiment") {
+      return "exposure";
+    }
+
+    if (eventType === "feature_usage" || eventType === "feature_evaluated") {
+      return "feature";
+    }
+
+    return "event";
+  }
+
+  describeEvent(payload) {
+    if (payload.event_type === "experiment_viewed") {
+      return `experiment ${payload.experiment_id} → ${payload.variation_id}`;
+    }
+
+    if (payload.event_type === "feature_usage") {
+      return `feature ${payload.feature_key} = ${payload.feature_value}`;
+    }
+
+    return `${payload.event_type} — ${payload.user_id?.substring(0, 14) ?? "anon"}`;
   }
 
   async postEvent(payload) {
@@ -226,15 +524,22 @@ class StreamingDemo {
         headers: this.apiHeaders(),
         body: JSON.stringify(payload),
       });
-      if (res.ok) {
-        this.counts.events++;
-        this.recordEvent(
-          "event",
-          `${payload.event_type} — ${payload.user_id?.substring(0, 14) ?? "anon"}`,
-        );
+
+      if (!res.ok) {
+        return false;
       }
+
+      this.counts.events++;
+      if (payload.user_id) {
+        this.uniqueUsers.add(payload.user_id);
+      }
+      this.recordEvent(
+        this.classifyEventCategory(payload.event_type),
+        this.describeEvent(payload),
+      );
+      return true;
     } catch {
-      // network errors during simulation are silently skipped
+      return false;
     }
   }
 
@@ -245,42 +550,89 @@ class StreamingDemo {
         headers: this.apiHeaders(),
         body: JSON.stringify(payload),
       });
-      if (res.ok) {
-        this.counts.orders++;
-        this.counts.revenue += payload.amount;
-        this.recordEvent(
-          "order",
-          `order $${payload.amount.toFixed(2)} — ${payload.user_id?.substring(0, 14) ?? "anon"}`,
-        );
+
+      if (!res.ok) {
+        return false;
       }
+
+      this.counts.orders++;
+      this.counts.revenue += payload.amount;
+      if (payload.user_id) {
+        this.uniqueUsers.add(payload.user_id);
+      }
+      this.recordEvent(
+        "order",
+        `order $${payload.amount.toFixed(2)} — ${payload.user_id?.substring(0, 14) ?? "anon"}`,
+      );
+      return true;
     } catch {
-      // network errors during simulation are silently skipped
+      return false;
     }
   }
 
   async sendManualEvent() {
     const eventType = document.getElementById("eventType")?.value;
     const pagePath = document.getElementById("manualPagePath")?.value || null;
-    await this.postEvent({ event_type: eventType, page_path: pagePath });
-    this.updateMetrics();
-    this.showNotification("Event sent", "success");
+    const success = await this.postEvent({
+      ...this.buildVisitorPayload(),
+      event_type: eventType,
+      page_path: pagePath,
+    });
+
+    this.showNotification(success ? "Event sent" : "Event failed", success ? "success" : "error");
   }
 
   async sendManualOrder() {
     const amount = parseFloat(document.getElementById("orderAmount")?.value);
     const coupon = document.getElementById("orderCoupon")?.value || null;
-    if (!amount || isNaN(amount)) {
+    if (!amount || Number.isNaN(amount)) {
       this.showNotification("Enter a valid amount", "error");
       return;
     }
-    await this.postOrder({ amount, coupon_code: coupon });
-    this.updateMetrics();
-    this.showNotification("Order sent", "success");
+
+    const success = await this.postOrder({
+      ...this.buildVisitorPayload(),
+      amount,
+      coupon_code: coupon,
+    });
+
+    this.showNotification(success ? "Order sent" : "Order failed", success ? "success" : "error");
+  }
+
+  async sendExposureEvent() {
+    const success = await this.postEvent({
+      ...this.buildVisitorPayload(),
+      event_type: "experiment_viewed",
+      page_path: "/checkout",
+      ...this.buildExperimentPayload(),
+    });
+
+    this.showNotification(
+      success ? "Exposure event sent" : "Exposure event failed",
+      success ? "success" : "error",
+    );
+  }
+
+  async sendFeatureUsageEvent() {
+    const success = await this.postEvent({
+      ...this.buildVisitorPayload(),
+      event_type: "feature_usage",
+      page_path: "/checkout",
+      ...this.buildExperimentPayload(),
+    });
+
+    this.showNotification(
+      success ? "Feature usage sent" : "Feature usage failed",
+      success ? "success" : "error",
+    );
   }
 
   recordEvent(category, description) {
     this.eventHistory.push({ category, description, timestamp: new Date() });
-    if (this.eventHistory.length > 5000) this.eventHistory.shift();
+    if (this.eventHistory.length > 5000) {
+      this.eventHistory.shift();
+    }
+
     this.updateEventLog();
     this.updateMetrics();
     this.drawTimeline();
@@ -289,7 +641,9 @@ class StreamingDemo {
   updateEventLog() {
     const list = document.getElementById("eventLog");
     const countEl = document.getElementById("eventLogCount");
-    if (!list) return;
+    if (!list) {
+      return;
+    }
 
     const recent = this.eventHistory.slice(-10).reverse();
     list.innerHTML = "";
@@ -300,22 +654,25 @@ class StreamingDemo {
       li.textContent = "No events recorded yet.";
       list.appendChild(li);
     } else {
-      recent.forEach((ev) => {
+      recent.forEach((eventItem) => {
         const li = document.createElement("li");
         li.className = "event-log-item";
 
         const meta = document.createElement("div");
         meta.className = "event-log-meta";
-        const catEl = document.createElement("span");
-        catEl.textContent = ev.category.toUpperCase();
-        const timeEl = document.createElement("span");
-        timeEl.textContent = ev.timestamp.toLocaleTimeString();
-        meta.appendChild(catEl);
-        meta.appendChild(timeEl);
+
+        const category = document.createElement("span");
+        category.textContent = eventItem.category.toUpperCase();
+
+        const time = document.createElement("span");
+        time.textContent = eventItem.timestamp.toLocaleTimeString();
+
+        meta.appendChild(category);
+        meta.appendChild(time);
 
         const desc = document.createElement("div");
         desc.className = "event-log-description";
-        desc.textContent = ev.description;
+        desc.textContent = eventItem.description;
 
         li.appendChild(meta);
         li.appendChild(desc);
@@ -324,8 +681,8 @@ class StreamingDemo {
     }
 
     if (countEl) {
-      const n = this.eventHistory.length;
-      countEl.textContent = `${n} ${n === 1 ? "event" : "events"}`;
+      const count = this.eventHistory.length;
+      countEl.textContent = `${count} ${count === 1 ? "event" : "events"}`;
     }
   }
 
@@ -335,22 +692,28 @@ class StreamingDemo {
     document.getElementById("totalRevenue").textContent =
       `$${this.counts.revenue.toFixed(2)}`;
     document.getElementById("uniqueUsers").textContent = this.uniqueUsers.size;
-    const lastEv = this.eventHistory[this.eventHistory.length - 1];
-    if (lastEv) {
-      const el = document.getElementById("lastEventType");
-      if (el) el.textContent = lastEv.category;
+
+    const lastEvent = this.eventHistory[this.eventHistory.length - 1];
+    if (lastEvent) {
+      document.getElementById("lastEventType").textContent = lastEvent.category;
     }
+
     const summary = document.getElementById("timelineSummary");
     if (summary && this.eventHistory.length) {
-      summary.textContent = `${this.eventHistory.length} events · $${this.counts.revenue.toFixed(2)} revenue`;
+      summary.textContent =
+        `${this.eventHistory.length} events · $${this.counts.revenue.toFixed(2)} revenue`;
     }
   }
 
   async checkApiHealth() {
     const el = document.getElementById("apiStatus");
-    if (!el) return;
+    if (!el) {
+      return;
+    }
+
     el.textContent = "Checking...";
     el.className = "status-value connecting";
+
     try {
       const res = await fetch(this.config.api.healthEndpoint);
       el.textContent = res.ok ? "Connected" : "Error";
@@ -362,9 +725,15 @@ class StreamingDemo {
   }
 
   resizeCanvas() {
-    if (!this.timelineCanvas) return;
+    if (!this.timelineCanvas) {
+      return;
+    }
+
     const container = this.timelineCanvas.parentElement;
-    if (!container) return;
+    if (!container) {
+      return;
+    }
+
     const rect = container.getBoundingClientRect();
     const ratio = window.devicePixelRatio || 1;
     this.timelineCanvas.width = Math.floor(rect.width) * ratio;
@@ -378,7 +747,9 @@ class StreamingDemo {
   }
 
   drawTimeline() {
-    if (!this.timelineCtx) return;
+    if (!this.timelineCtx) {
+      return;
+    }
 
     const ctx = this.timelineCtx;
     const ratio = this.timelineScale || 1;
@@ -400,7 +771,7 @@ class StreamingDemo {
     ctx.save();
     ctx.scale(ratio, ratio);
 
-    ctx.strokeStyle = "#e2e8f0";
+    ctx.strokeStyle = "#d1d5db";
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padding, padding);
@@ -409,7 +780,7 @@ class StreamingDemo {
     ctx.stroke();
 
     if (!this.eventHistory.length) {
-      ctx.fillStyle = "#94a3b8";
+      ctx.fillStyle = "#6b7280";
       ctx.font = "14px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.fillText("Events will appear here once sent.", width / 2, height / 2);
@@ -421,34 +792,32 @@ class StreamingDemo {
     const startTime = events[0].timestamp.getTime();
     const endTime = events[events.length - 1].timestamp.getTime();
     const timeSpan = Math.max(endTime - startTime, 1000);
-
     const categories = {};
     const cumulativeCounts = {};
 
-    events.forEach((ev) => {
-      const key = ev.category;
+    events.forEach((eventItem) => {
+      const key = eventItem.category;
       if (!categories[key]) {
         categories[key] = {
-          color: this.timelineCategoryColors[key] || "#64748b",
+          color: this.timelineCategoryColors[key] || "#475569",
           points: [],
         };
         cumulativeCounts[key] = 0;
       }
-      cumulativeCounts[key]++;
+
+      cumulativeCounts[key] += 1;
       categories[key].points.push({
-        t: ev.timestamp.getTime(),
+        t: eventItem.timestamp.getTime(),
         count: cumulativeCounts[key],
       });
     });
 
     const categoryEntries = Object.entries(categories).filter(
-      ([, d]) => d.points.length,
+      ([, data]) => data.points.length,
     );
     const maxCount = categoryEntries.length
       ? Math.max(
-          ...categoryEntries.map(
-            ([, d]) => d.points[d.points.length - 1].count,
-          ),
+          ...categoryEntries.map(([, data]) => data.points[data.points.length - 1].count),
         )
       : 1;
     const yTicks = Math.min(maxCount, 4);
@@ -456,13 +825,13 @@ class StreamingDemo {
     for (let i = 0; i <= yTicks; i++) {
       const fraction = yTicks === 0 ? 0 : i / yTicks;
       const y = height - padding - fraction * chartHeight;
-      ctx.strokeStyle = i === 0 ? "#cbd5e1" : "#f1f5f9";
+      ctx.strokeStyle = i === 0 ? "#cbd5e1" : "#eef2f7";
       ctx.lineWidth = i === 0 ? 2 : 1;
       ctx.beginPath();
       ctx.moveTo(padding, y);
       ctx.lineTo(width - padding, y);
       ctx.stroke();
-      ctx.fillStyle = "#94a3b8";
+      ctx.fillStyle = "#6b7280";
       ctx.font = "12px system-ui, sans-serif";
       ctx.textAlign = "right";
       ctx.fillText(String(Math.round(fraction * maxCount)), padding - 8, y + 4);
@@ -474,11 +843,14 @@ class StreamingDemo {
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
       ctx.beginPath();
-      data.points.forEach((pt, i) => {
-        const x = padding + ((pt.t - startTime) / timeSpan) * chartWidth;
-        const y = height - padding - (pt.count / maxCount) * chartHeight;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      data.points.forEach((point, index) => {
+        const x = padding + ((point.t - startTime) / timeSpan) * chartWidth;
+        const y = height - padding - (point.count / maxCount) * chartHeight;
+        if (index === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
       });
       ctx.stroke();
 
@@ -498,34 +870,99 @@ class StreamingDemo {
       );
     });
 
-    const startLabel = new Date(startTime).toLocaleTimeString();
-    const endLabel = new Date(endTime).toLocaleTimeString();
-    ctx.fillStyle = "#94a3b8";
+    ctx.fillStyle = "#6b7280";
     ctx.font = "12px system-ui, sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText(startLabel, padding, height - padding + 20);
+    ctx.fillText(new Date(startTime).toLocaleTimeString(), padding, height - padding + 20);
     ctx.textAlign = "right";
-    ctx.fillText(endLabel, width - padding, height - padding + 20);
+    ctx.fillText(new Date(endTime).toLocaleTimeString(), width - padding, height - padding + 20);
 
     ctx.restore();
   }
 
   showNotification(message, type = "info") {
     const container = document.getElementById("notifications");
-    if (!container) return;
+    if (!container) {
+      return;
+    }
+
     const el = document.createElement("div");
     el.className = `notification notification-${type}`;
     el.textContent = message;
     container.appendChild(el);
+
     setTimeout(() => {
       el.style.animation = "slideOut 0.3s ease forwards";
       setTimeout(() => el.remove(), 300);
     }, 3000);
   }
+
+  generateRandomString(length) {
+    const chars = "0123456789abcdefghijklmnopqrstuvwxyz";
+    let result = "";
+    const cryptoObj =
+      (typeof window !== "undefined" && window.crypto) ||
+      (typeof self !== "undefined" && self.crypto) ||
+      null;
+
+    if (cryptoObj && typeof cryptoObj.getRandomValues === "function") {
+      const bytes = new Uint8Array(length);
+      cryptoObj.getRandomValues(bytes);
+      for (let i = 0; i < length; i++) {
+        result += chars[bytes[i] % chars.length];
+      }
+      return result;
+    }
+
+    while (result.length < length) {
+      result += Math.random().toString(36).slice(2);
+    }
+
+    return result.slice(0, length);
+  }
+
+  randomUserId() {
+    return `user_${this.generateRandomString(9)}`;
+  }
+
+  randomSessionId() {
+    return `sess_${this.generateRandomString(9)}`;
+  }
+
+  randomDeviceType() {
+    return DEVICE_TYPES[Math.floor(Math.random() * DEVICE_TYPES.length)];
+  }
+
+  randomCountry() {
+    return COUNTRIES[Math.floor(Math.random() * COUNTRIES.length)];
+  }
+
+  randomReferrer() {
+    return REFERRERS[Math.floor(Math.random() * REFERRERS.length)];
+  }
+
+  hashToUnitInterval(value) {
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    return (hash >>> 0) / 4294967295;
+  }
+
+  readJsonFromStorage(key) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
 }
 
 function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 document.addEventListener("DOMContentLoaded", () => new StreamingDemo());

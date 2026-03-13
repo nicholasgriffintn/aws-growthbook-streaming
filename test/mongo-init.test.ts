@@ -63,17 +63,19 @@ function loadHandler(ssmSend: ReturnType<typeof vi.fn>, secretsSend: ReturnType<
     throw new Error(`Unexpected module: ${id}`);
   };
 
-  const module = { exports: {} as { handler: (event: any) => Promise<unknown> } };
+  const cjsModule = {
+    exports: {} as { handler: (event: any) => Promise<unknown> },
+  };
   const wrapped = `(function(require, module, exports) {\n${source}\n})`;
   const factory = vm.runInThisContext(wrapped, { filename: modulePath }) as (
     require: (id: string) => unknown,
-    module: typeof module,
-    exports: typeof module.exports,
+    module: typeof cjsModule,
+    exports: typeof cjsModule.exports,
   ) => void;
 
-  factory(mockedRequire, module, module.exports);
+  factory(mockedRequire, cjsModule, cjsModule.exports);
 
-  return module.exports.handler;
+  return cjsModule.exports.handler;
 }
 
 const baseEvent = {

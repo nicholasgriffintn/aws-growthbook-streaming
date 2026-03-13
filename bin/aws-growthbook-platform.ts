@@ -136,17 +136,6 @@ if (onlyStack !== "ECRStack") {
   });
   api.addDependency(appLambdas);
 
-  const frontend = new FrontendStack(app, 'FrontendStack', {
-    env,
-    description: 'Demo site for streaming events to GrowthBook',
-    component,
-    apiUrl: api.api.url,
-    domainName: frontendDomainName,
-    certificateArn: app.node.tryGetContext('frontendCertificateArn'),
-    apiKey,
-  });
-  frontend.addDependency(api);
-
   const automation = new AutomationStack(app, 'AutomationStack', {
     env,
     description: 'Custom resources: auto-generate secrets, init Mongo/Redshift',
@@ -186,4 +175,16 @@ if (onlyStack !== "ECRStack") {
     emailPasswordParameter: secrets.growthbookEmailPasswordParameter,
   });
   application.addDependency(automation);
+
+  const frontend = new FrontendStack(app, 'FrontendStack', {
+    env,
+    description: 'Demo site for streaming events to GrowthBook',
+    component,
+    apiUrl: api.api.url,
+    domainName: frontendDomainName,
+    certificateArn: app.node.tryGetContext('frontendCertificateArn'),
+    apiKey,
+    growthbookAppUrl: application.publicAppUrl,
+  });
+  frontend.addDependency(api);
 }

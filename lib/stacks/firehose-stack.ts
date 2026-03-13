@@ -77,7 +77,7 @@ export class FirehoseStack extends cdk.Stack {
           copyCommand: {
             dataTableName: "experimentation.fact_events",
             dataTableColumns:
-              "event_id,user_id,anonymous_id,timestamp,event_type,page_path,session_id,device_type,properties",
+              "event_id,user_id,anonymous_id,timestamp,event_type,page_path,session_id,device_type,properties,page_category,country,referrer_domain,logged_in,experiment_id,variation_id,feature_key,feature_value",
             copyOptions:
               "JSON 'auto ignorecase' TIMEFORMAT 'auto' TRUNCATECOLUMNS",
           },
@@ -134,7 +134,7 @@ export class FirehoseStack extends cdk.Stack {
           copyCommand: {
             dataTableName: "experimentation.fact_orders",
             dataTableColumns:
-              "order_id,user_id,anonymous_id,timestamp,amount,currency,device_type,coupon_code",
+              "order_id,user_id,anonymous_id,session_id,timestamp,amount,currency,device_type,country,referrer_domain,logged_in,coupon_code,order_status,properties",
             copyOptions:
               "JSON 'auto ignorecase' TIMEFORMAT 'auto' TRUNCATECOLUMNS",
           },

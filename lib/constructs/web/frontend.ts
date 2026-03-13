@@ -13,6 +13,7 @@ export interface FrontendConstructProps {
   domainName?: string;
   certificateArn?: string;
   apiKey?: string;
+  growthbookAppUrl?: string;
 }
 
 export class FrontendConstruct extends Construct {
@@ -30,6 +31,7 @@ export class FrontendConstruct extends Construct {
       domainName,
       certificateArn,
       apiKey,
+      growthbookAppUrl,
     } = props;
 
     this.websiteBucket = new s3.Bucket(this, "WebsiteBucket", {
@@ -103,6 +105,32 @@ export class FrontendConstruct extends Construct {
         ordersEndpoint: `${apiUrl}orders`,
         healthEndpoint: `${apiUrl}health`,
         ...(apiKey ? { apiKey } : {}),
+      },
+      growthbook: {
+        ...(growthbookAppUrl ? { appUrl: growthbookAppUrl } : {}),
+        assignmentView: "experimentation.experiment_assignments",
+        featureUsageView: "experimentation.feature_usage",
+        sessionMetricsView: "experimentation.session_metrics",
+        checkoutFunnelView: "experimentation.checkout_funnel",
+        userDayMetricsView: "experimentation.user_day_metrics",
+        demoExperiment: {
+          key: "checkout-layout-aa",
+          featureKey: "checkout-layout",
+          variations: [
+            {
+              id: "0",
+              label: "classic",
+              value: "classic",
+              conversionMultiplier: 1,
+            },
+            {
+              id: "1",
+              label: "modern",
+              value: "modern",
+              conversionMultiplier: 1,
+            },
+          ],
+        },
       },
     };
 

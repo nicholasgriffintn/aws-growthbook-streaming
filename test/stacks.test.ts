@@ -208,6 +208,7 @@ describe("FirehoseStack", () => {
   const stack = new FirehoseStack(app, "TestFirehoseStack", {
     firehoseBackupBucket: storageStack.firehoseBackupBucket,
     redshiftEndpointAddress: redshiftStack.workgroupEndpointAddress,
+    redshiftEndpointPort: redshiftStack.workgroupEndpointPort,
     redshiftDatabaseName: redshiftStack.databaseName,
     redshiftAdminSecret: redshiftStack.adminSecret,
   });
@@ -219,6 +220,26 @@ describe("FirehoseStack", () => {
 
   it("creates two Firehose delivery streams", () => {
     template.resourceCountIs("AWS::KinesisFirehose::DeliveryStream", 2);
+  });
+
+  it("delivers enriched event and order columns into Redshift", () => {
+    template.hasResourceProperties("AWS::KinesisFirehose::DeliveryStream", {
+      RedshiftDestinationConfiguration: {
+        CopyCommand: {
+          DataTableColumns:
+            "event_id,user_id,anonymous_id,timestamp,event_type,page_path,session_id,device_type,properties,page_category,country,referrer_domain,logged_in,experiment_id,variation_id,feature_key,feature_value",
+        },
+      },
+    });
+
+    template.hasResourceProperties("AWS::KinesisFirehose::DeliveryStream", {
+      RedshiftDestinationConfiguration: {
+        CopyCommand: {
+          DataTableColumns:
+            "order_id,user_id,anonymous_id,session_id,timestamp,amount,currency,device_type,country,referrer_domain,logged_in,coupon_code,order_status,properties",
+        },
+      },
+    });
   });
 
   it("creates a delivery-stalled alarm for events", () => {

@@ -29,6 +29,7 @@ export class ApplicationStack extends cdk.Stack {
   public readonly ecsCluster: ecs.Cluster;
   public readonly ecsTaskSg: ec2.SecurityGroup;
   public readonly applicationLoadBalancer: elbv2.ApplicationLoadBalancer;
+  public readonly publicAppUrl: string;
 
   constructor(scope: Construct, id: string, props: ApplicationStackProps) {
     super(scope, id, props);
@@ -154,6 +155,7 @@ export class ApplicationStack extends cdk.Stack {
     const appOrigin = useCustomDomain
       ? `https://growthbook.${domain}`
       : `http://${this.applicationLoadBalancer.loadBalancerDnsName}`;
+    this.publicAppUrl = appOrigin;
     const corsOriginRegex = useCustomDomain
       ? undefined
       : `^https?://prod-growthbook-appLB-[0-9]+\\.${this.region}\\.elb\\.amazonaws\\.com$`;

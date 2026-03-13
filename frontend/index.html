@@ -1,133 +1,245 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GrowthBook Streaming Demo</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
+    <link rel="stylesheet" href="style.css" />
+    </head>
+    
+    <body>
     <div class="container">
-        <header>
-            <h1>GrowthBook Streaming Demo</h1>
-            <p>Simulated e-commerce events → API Gateway → Lambda → Firehose → Redshift fact tables → GrowthBook metrics</p>
+      <header>
+        <h1>GrowthBook Streaming Demo</h1>
+        <p>
+          Stream behavioural data into Redshift, model it for GrowthBook, and
+          exercise warehouse-native experiment analysis with realistic exposure
+          and feature events.
+        </p>
+        <p>
+          `fact_events` and `fact_orders` stream into Redshift. GrowthBook then
+          reads warehouse views for experiment assignments, feature usage,
+          funnels, and user-day metrics.
+        </p>
         </header>
 
-        <main>
-            <div class="main-layout">
-                <section class="layout-left">
-                    <div class="card timeline-card">
-                        <div class="card-heading">
-                            <h2>Event Timeline</h2>
-                            <span class="card-subtitle" id="timelineSummary">Awaiting events</span>
-                        </div>
-                        <div class="chart-area">
-                            <canvas id="eventTimelineChart" height="280"></canvas>
-                        </div>
-                    </div>
-
-                    <div class="log-monitoring-layout">
-                        <div class="card log-card">
-                            <div class="log-header">
-                                <h2>Event Log</h2>
-                                <span class="log-count" id="eventLogCount">0 events</span>
-                            </div>
-                            <div class="log-body">
-                                <ul id="eventLog" class="event-log-list">
-                                    <li class="empty-state">No events recorded yet.</li>
-                                </ul>
-                            </div>
-                        </div>
-
-                        <div class="card monitoring-card">
-                            <h2>Metrics</h2>
-                            <div class="metrics">
-                                <div class="metric">
-                                    <span class="metric-label">Events</span>
-                                    <span class="metric-value" id="totalEvents">0</span>
-                                </div>
-                                <div class="metric">
-                                    <span class="metric-label">Orders</span>
-                                    <span class="metric-value" id="totalOrders">0</span>
-                                </div>
-                                <div class="metric">
-                                    <span class="metric-label">Revenue</span>
-                                    <span class="metric-value" id="totalRevenue">$0</span>
-                                </div>
-                                <div class="metric">
-                                    <span class="metric-label">Users</span>
-                                    <span class="metric-value" id="uniqueUsers">0</span>
-                                </div>
-                            </div>
-
-                            <div class="status">
-                                <div class="status-item">
-                                    <span class="status-label">API</span>
-                                    <span class="status-value" id="apiStatus">Checking...</span>
-                                </div>
-                                <div class="status-item">
-                                    <span class="status-label">Last event</span>
-                                    <span class="status-value" id="lastEventType">—</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="layout-right">
-                    <div class="card">
-                        <h2>Simulation</h2>
-                        <div class="form-group">
-                            <label for="simulationRate">Users per burst: <span id="simulationRateValue">5</span></label>
-                            <input type="range" id="simulationRate" min="1" max="20" value="5">
-                        </div>
-                        <div class="sim-buttons">
-                            <button type="button" id="burstBtn">Run burst</button>
-                            <button type="button" id="autoBtn" class="btn-secondary">Start auto</button>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <h2>Send event manually</h2>
-                        <div class="form-group">
-                            <label for="eventType">Event type</label>
-                            <select id="eventType">
-                                <option value="page_view">page_view</option>
-                                <option value="add_to_cart">add_to_cart</option>
-                                <option value="checkout_start">checkout_start</option>
-                                <option value="signup">signup</option>
-                                <option value="button_click">button_click</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="manualPagePath">Page path</label>
-                            <input type="text" id="manualPagePath" value="/products">
-                        </div>
-                        <button type="button" id="sendEventBtn">Send event</button>
-                    </div>
-
-                    <div class="card">
-                        <h2>Send order manually</h2>
-                        <div class="form-group">
-                            <label for="orderAmount">Amount ($)</label>
-                            <input type="number" id="orderAmount" value="49.99" min="0.01" step="0.01">
-                        </div>
-                        <div class="form-group">
-                            <label for="orderCoupon">Coupon code (optional)</label>
-                            <input type="text" id="orderCoupon" placeholder="SAVE10">
-                        </div>
-                        <button type="button" id="sendOrderBtn">Send order</button>
-                    </div>
-                </section>
+      <main>
+        <div class="main-layout">
+          <section class="layout-left">
+            <div class="card timeline-card">
+              <div class="card-heading">
+                <h2>Event Timeline</h2>
+                <span class="card-subtitle" id="timelineSummary">Awaiting events</span>
+              </div>
+              <div class="chart-area">
+                <canvas id="eventTimelineChart" height="280"></canvas>
+              </div>
             </div>
-        </main>
 
-        <footer>
-            <p>fact_events and fact_orders stream to Redshift → GrowthBook queries these as metric fact tables</p>
-        </footer>
+            <div class="log-monitoring-layout">
+              <div class="card log-card">
+                <div class="log-header">
+                  <h2>Event Log</h2>
+                  <span class="log-count" id="eventLogCount">0 events</span>
+                </div>
+                <div class="log-body">
+                  <ul id="eventLog" class="event-log-list">
+                    <li class="empty-state">No events recorded yet.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div class="card monitoring-card">
+                <h2>Metrics</h2>
+                <div class="metrics">
+                  <div class="metric">
+                    <span class="metric-label">Events</span>
+                    <span class="metric-value" id="totalEvents">0</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Orders</span>
+                    <span class="metric-value" id="totalOrders">0</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Revenue</span>
+                    <span class="metric-value" id="totalRevenue">$0</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Users</span>
+                    <span class="metric-value" id="uniqueUsers">0</span>
+                  </div>
+                </div>
+
+                <div class="status">
+                  <div class="status-item">
+                    <span class="status-label">API</span>
+                    <span class="status-value" id="apiStatus">Checking...</span>
+                  </div>
+                  <div class="status-item">
+                    <span class="status-label">GrowthBook</span>
+                    <span class="status-value connecting" id="growthbookStatus">Checking...</span>
+                    </div>
+                    <div class="status-item">
+                      <span class="status-label">Assignment</span>
+                      <span class="status-value" id="assignmentBadge">—</span>
+                    </div>
+                    <div class="status-item">
+                    <span class="status-label">Last event</span>
+                    <span class="status-value" id="lastEventType">—</span>
+                    </div>
+                    </div>
+                    </div>
+                    </div>
+                    </section>
+
+          <section class="layout-right">
+            <div class="card">
+              <h2>Visitor Context</h2>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="visitorUserId">User ID</label>
+                  <input type="text" id="visitorUserId" />
+                </div>
+                <div class="form-group">
+                  <label for="visitorAnonymousId">Anonymous ID</label>
+                  <input type="text" id="visitorAnonymousId" />
+                </div>
+                <div class="form-group">
+                  <label for="visitorSessionId">Session ID</label>
+                  <input type="text" id="visitorSessionId" />
+                </div>
+                <div class="form-group">
+                  <label for="visitorDeviceType">Device type</label>
+                  <select id="visitorDeviceType">
+                    <option value="desktop">desktop</option>
+                    <option value="mobile">mobile</option>
+                    <option value="tablet">tablet</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="visitorCountry">Country</label>
+                  <select id="visitorCountry">
+                    <option value="GB">GB</option>
+                    <option value="US">US</option>
+                    <option value="DE">DE</option>
+                    <option value="FR">FR</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="visitorReferrer">Referrer</label>
+                  <input type="text" id="visitorReferrer" value="https://search.example/" />
+                </div>
+              </div>
+              <label class="checkbox-row" for="visitorLoggedIn">
+                <input type="checkbox" id="visitorLoggedIn" />
+                <span>Logged in</span>
+              </label>
+              <div class="sim-buttons">
+                <button type="button" id="refreshVisitorBtn">
+                  New visitor
+                </button>
+                <button type="button" id="newSessionBtn" class="btn-secondary">
+                  New session
+                </button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>Simulation</h2>
+              <div class="form-group">
+                <label for="simulationRate">Users per burst: <span id="simulationRateValue">5</span></label>
+                <input type="range" id="simulationRate" min="1" max="20" value="5" />
+                </div>
+                <div class="sim-buttons">
+                  <button type="button" id="burstBtn">Run burst</button>
+                <button type="button" id="autoBtn" class="btn-secondary">
+                  Start auto
+                </button>
+                </div>
+                </div>
+                
+                <div class="card">
+                  <h2>GrowthBook Tracking</h2>
+                  <p class="card-copy" id="growthbookCopy">
+                    The demo emits warehouse-compatible experiment and feature
+                    events so you can configure assignment queries, dimensions, and
+                    metrics in GrowthBook.
+                  </p>
+                  <div class="pill-list">
+                    <span class="pill" id="assignmentViewPill">Assignments: experimentation.experiment_assignments</span>
+                    <span class="pill" id="featureViewPill">Features: experimentation.feature_usage</span>
+                  </div>
+                  <div class="form-grid">
+                    <div class="form-group">
+                      <label for="experimentKey">Experiment key</label>
+                      <input type="text" id="experimentKey" />
+                    </div>
+                    <div class="form-group">
+                      <label for="featureKey">Feature key</label>
+                      <input type="text" id="featureKey" />
+                    </div>
+                    <div class="form-group">
+                      <label for="variationId">Variation ID</label>
+                      <input type="text" id="variationId" />
+                    </div>
+                    <div class="form-group">
+                      <label for="featureValue">Feature value</label>
+                      <input type="text" id="featureValue" />
+                    </div>
+                  </div>
+                  <div class="assignment-summary" id="assignmentSummary">
+                    No assignment yet.
+                  </div>
+                  <div class="sim-buttons">
+                    <button type="button" id="sendExposureBtn">
+                      Send exposure
+                    </button>
+                    <button type="button" id="sendFeatureUsageBtn" class="btn-secondary">
+                      Send feature usage
+                    </button>
+                  </div>
+              <a id="growthbookAppLink" class="inline-link hidden" target="_blank" rel="noreferrer">Open GrowthBook app</a>
+            </div>
+
+            <div class="card">
+              <h2>Send event manually</h2>
+              <div class="form-group">
+                <label for="eventType">Event type</label>
+                <select id="eventType">
+                  <option value="page_view">page_view</option>
+                  <option value="add_to_cart">add_to_cart</option>
+                  <option value="checkout_start">checkout_start</option>
+                  <option value="signup">signup</option>
+                  <option value="button_click">button_click</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="manualPagePath">Page path</label>
+                <input type="text" id="manualPagePath" value="/products" />
+                </div>
+                <button type="button" id="sendEventBtn">Send event</button>
+                </div>
+
+            <div class="card">
+              <h2>Send order manually</h2>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="orderAmount">Amount ($)</label>
+                  <input type="number" id="orderAmount" value="49.99" min="0.01" step="0.01" />
+                  </div>
+                  <div class="form-group">
+                  <label for="orderCoupon">Coupon code</label>
+                  <input type="text" id="orderCoupon" placeholder="SAVE10" />
+                  </div>
+                  </div>
+                  <button type="button" id="sendOrderBtn">Send order</button>
+                  </div>
+                  </section>
+                  </div>
+                  </main>
     </div>
 
     <div id="notifications" class="notifications"></div>
     <script src="app.js"></script>
-</body>
+  </body>
 </html>
