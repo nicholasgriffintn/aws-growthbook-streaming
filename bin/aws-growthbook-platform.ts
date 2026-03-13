@@ -2,7 +2,7 @@
 import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
 
-import { ApplicationStack } from "../lib/stacks/application-stack";
+import { ApplicationStack } from '../lib/stacks/application-stack';
 import { CoreNetworkStack } from "../lib/stacks/core-network-stack";
 import { DocumentDbStack } from "../lib/stacks/document-db-stack";
 import { ECRStack } from "../lib/stacks/ecr-stack";
@@ -29,37 +29,10 @@ const env = {
 
 const component = app.node.tryGetContext("component") || "growthbook-platform";
 const domain = app.node.tryGetContext("domain") || "";
+const onlyStack = app.node.tryGetContext("onlyStack") as string | undefined;
 const frontendDomainName: string | undefined =
   app.node.tryGetContext("frontendDomainName");
 const apiKey: string | undefined = app.node.tryGetContext("apiKey");
-
-const core = new CoreNetworkStack(app, "CoreNetworkStack", {
-  env,
-  description: "Core network (VPC) for the data platform",
-  component,
-});
-
-const secrets = new SecretsStack(app, "SecretsStack", {
-  env,
-  description: "KMS key and SSM parameters for GrowthBook",
-  component,
-});
-
-const iam = new IamStack(app, "IamStack", {
-  env,
-  description: "IAM policy and ECS task role for GrowthBook",
-  component,
-  kmsKeyArn: secrets.kms.keyArn,
-  growthbookMongoDBStringParameterArn:
-    secrets.growthbookMongoDBStringParameter.parameterArn,
-  growthbookEncryptionKeyParameterArn:
-    secrets.growthbookEncryptionKeyParameter.parameterArn,
-  growthbookJWTParameterArn: secrets.growthbookJWTParameter.parameterArn,
-  growthbookEmailUsernameParameterArn:
-    secrets.growthbookEmailUsernameParameter.parameterArn,
-  growthbookEmailPasswordParameterArn:
-    secrets.growthbookEmailPasswordParameter.parameterArn,
-});
 
 const ecr = new ECRStack(app, "ECRStack", {
   env,
@@ -67,113 +40,150 @@ const ecr = new ECRStack(app, "ECRStack", {
   component,
 });
 
-const application = new ApplicationStack(app, "ApplicationStack", {
-  env,
-  description: "ECS Fargate service, ALB, and Route 53 records for GrowthBook",
-  component,
-  vpc: core.vpc.vpc,
-  ecsTaskRole: iam.growthbookServiceRole,
-  ecsRepository: ecr.growthbookEcrRepository,
-  domain,
-  mongoDBStringParameter: secrets.growthbookMongoDBStringParameter,
-  encryptionKeyParameter: secrets.growthbookEncryptionKeyParameter,
-  jwtParameter: secrets.growthbookJWTParameter,
-  emailUsernameParameter: secrets.growthbookEmailUsernameParameter,
-  emailPasswordParameter: secrets.growthbookEmailPasswordParameter,
-});
-
-const docdb = new DocumentDbStack(app, "DocumentDbStack", {
-  env,
-  description: "DocumentDB cluster for GrowthBook",
-  component,
-  vpc: core.vpc.vpc,
-  kmsKey: secrets.kms,
-  ecsTaskSecurityGroup: application.ecsTaskSg,
-});
-
-const streamingStorage = new StreamingStorageStack(
-  app,
-  "StreamingStorageStack",
-  {
+if (onlyStack !== "ECRStack") {
+  const core = new CoreNetworkStack(app, 'CoreNetworkStack', {
     env,
-    description: "S3 bucket for Firehose staging and backup",
+    description: 'Core network (VPC) for the data platform',
     component,
-  },
-);
+  });
 
-const redshift = new RedshiftStack(app, "RedshiftStack", {
-  env,
-  description: "Redshift Serverless for GrowthBook analytics data source",
-  component,
-  vpc: core.vpc.vpc,
-});
-redshift.addDependency(core);
+  const secrets = new SecretsStack(app, 'SecretsStack', {
+    env,
+    description: 'KMS key and SSM parameters for GrowthBook',
+    component,
+  });
 
-const firehose = new FirehoseStack(app, "FirehoseStack", {
-  env,
-  description:
-    "Firehose delivery streams: analytics events and experiment activations → Redshift",
-  component,
-  firehoseBackupBucket: streamingStorage.firehoseBackupBucket,
-  redshiftEndpointAddress: redshift.workgroupEndpointAddress,
-  redshiftDatabaseName: redshift.databaseName,
-  redshiftAdminSecret: redshift.adminSecret,
-});
-firehose.addDependency(streamingStorage);
-firehose.addDependency(redshift);
+  const iam = new IamStack(app, 'IamStack', {
+    env,
+    description: 'IAM policy and ECS task role for GrowthBook',
+    component,
+    kmsKeyArn: secrets.kms.keyArn,
+    growthbookMongoDBStringParameterArn:
+      secrets.growthbookMongoDBStringParameter.parameterArn,
+    growthbookEncryptionKeyParameterArn:
+      secrets.growthbookEncryptionKeyParameter.parameterArn,
+    growthbookJWTParameterArn: secrets.growthbookJWTParameter.parameterArn,
+    growthbookEmailUsernameParameterArn:
+      secrets.growthbookEmailUsernameParameter.parameterArn,
+    growthbookEmailPasswordParameterArn:
+      secrets.growthbookEmailPasswordParameter.parameterArn,
+  });
 
-const appLambdas = new ApplicationLambdasStack(app, "ApplicationLambdasStack", {
-  env,
-  description: "Lambda functions for events and orders fact table producers",
-  component,
-  eventsFirehoseStreamName: firehose.eventsFirehoseStreamName,
-  ordersFirehoseStreamName: firehose.ordersFirehoseStreamName,
-});
-appLambdas.addDependency(firehose);
+  const docdb = new DocumentDbStack(app, 'DocumentDbStack', {
+    env,
+    description: 'DocumentDB cluster for GrowthBook',
+    component,
+    vpc: core.vpc.vpc,
+    kmsKey: secrets.kms,
+  });
 
-const api = new ApiGatewayStack(app, "ApiGatewayStack", {
-  env,
-  description:
-    "REST API for streaming events and orders to Redshift fact tables",
-  component,
-  eventsLambda: appLambdas.eventsLambda,
-  ordersLambda: appLambdas.ordersLambda,
-  corsOrigin: frontendDomainName ? `https://${frontendDomainName}` : undefined,
-});
-api.addDependency(appLambdas);
+  const streamingStorage = new StreamingStorageStack(
+    app,
+    'StreamingStorageStack',
+    {
+      env,
+      description: 'S3 bucket for Firehose staging and backup',
+      component,
+    },
+  );
 
-const frontend = new FrontendStack(app, "FrontendStack", {
-  env,
-  description: "Demo site for streaming events to GrowthBook",
-  component,
-  apiUrl: api.api.url,
-  domainName: frontendDomainName,
-  certificateArn: app.node.tryGetContext("frontendCertificateArn"),
-  apiKey,
-});
-frontend.addDependency(api);
+  const redshift = new RedshiftStack(app, 'RedshiftStack', {
+    env,
+    description: 'Redshift Serverless for GrowthBook analytics data source',
+    component,
+    vpc: core.vpc.vpc,
+  });
+  redshift.addDependency(core);
 
-const automation = new AutomationStack(app, "AutomationStack", {
-  env,
-  description: "Custom resources: auto-generate secrets, init Mongo/Redshift",
-  component,
-  encryptionKeyParameterArn:
-    secrets.growthbookEncryptionKeyParameter.parameterArn,
-  encryptionKeyParameterName:
-    secrets.growthbookEncryptionKeyParameter.parameterName,
-  jwtParameterArn: secrets.growthbookJWTParameter.parameterArn,
-  jwtParameterName: secrets.growthbookJWTParameter.parameterName,
-  docdbSecretArn: docdb.cluster.secret!.secretArn,
-  docdbEndpoint: docdb.cluster.clusterEndpoint.hostname,
-  mongoDbParameterArn: secrets.growthbookMongoDBStringParameter.parameterArn,
-  mongoDbParameterName: secrets.growthbookMongoDBStringParameter.parameterName,
-  ecsClusterArn: application.ecsCluster.clusterArn,
-  ecsServiceName: "growthbook",
-  redshiftWorkgroupName: redshift.workgroupName,
-  redshiftDatabase: redshift.databaseName,
-  redshiftAdminSecretArn: redshift.adminSecret.secretArn,
-  redshiftUserSecretArn: redshift.growthbookUserSecret.secretArn,
-});
-automation.addDependency(docdb);
-automation.addDependency(application);
-automation.addDependency(redshift);
+  const firehose = new FirehoseStack(app, 'FirehoseStack', {
+    env,
+    description:
+      'Firehose delivery streams: analytics events and experiment activations to Redshift',
+    component,
+    firehoseBackupBucket: streamingStorage.firehoseBackupBucket,
+    redshiftEndpointAddress: redshift.workgroupEndpointAddress,
+    redshiftEndpointPort: redshift.workgroupEndpointPort,
+    redshiftDatabaseName: redshift.databaseName,
+    redshiftAdminSecret: redshift.adminSecret,
+  });
+  firehose.addDependency(streamingStorage);
+  firehose.addDependency(redshift);
+
+  const appLambdas = new ApplicationLambdasStack(
+    app,
+    'ApplicationLambdasStack',
+    {
+      env,
+      description:
+        'Lambda functions for events and orders fact table producers',
+      component,
+      eventsFirehoseStreamName: firehose.eventsFirehoseStreamName,
+      ordersFirehoseStreamName: firehose.ordersFirehoseStreamName,
+    },
+  );
+  appLambdas.addDependency(firehose);
+
+  const api = new ApiGatewayStack(app, 'ApiGatewayStack', {
+    env,
+    description:
+      'REST API for streaming events and orders to Redshift fact tables',
+    component,
+    eventsLambda: appLambdas.eventsLambda,
+    ordersLambda: appLambdas.ordersLambda,
+    corsOrigin: frontendDomainName
+      ? `https://${frontendDomainName}`
+      : undefined,
+  });
+  api.addDependency(appLambdas);
+
+  const frontend = new FrontendStack(app, 'FrontendStack', {
+    env,
+    description: 'Demo site for streaming events to GrowthBook',
+    component,
+    apiUrl: api.api.url,
+    domainName: frontendDomainName,
+    certificateArn: app.node.tryGetContext('frontendCertificateArn'),
+    apiKey,
+  });
+  frontend.addDependency(api);
+
+  const automation = new AutomationStack(app, 'AutomationStack', {
+    env,
+    description: 'Custom resources: auto-generate secrets, init Mongo/Redshift',
+    component,
+    encryptionKeyParameterArn:
+      secrets.growthbookEncryptionKeyParameter.parameterArn,
+    encryptionKeyParameterName:
+      secrets.growthbookEncryptionKeyParameter.parameterName,
+    jwtParameterArn: secrets.growthbookJWTParameter.parameterArn,
+    jwtParameterName: secrets.growthbookJWTParameter.parameterName,
+    docdbSecretArn: docdb.cluster.secret!.secretArn,
+    docdbEndpoint: docdb.cluster.clusterEndpoint.hostname,
+    mongoDbParameterArn: secrets.growthbookMongoDBStringParameter.parameterArn,
+    mongoDbParameterName:
+      secrets.growthbookMongoDBStringParameter.parameterName,
+    redshiftWorkgroupName: redshift.workgroupName,
+    redshiftDatabase: redshift.databaseName,
+    redshiftAdminSecretArn: redshift.adminSecret.secretArn,
+    redshiftUserSecretArn: redshift.growthbookUserSecret.secretArn,
+  });
+  automation.addDependency(docdb);
+  automation.addDependency(redshift);
+
+  const application = new ApplicationStack(app, 'ApplicationStack', {
+    env,
+    description:
+      'ECS Fargate service, ALB, and Route 53 records for GrowthBook',
+    component,
+    vpc: core.vpc.vpc,
+    ecsTaskRole: iam.growthbookServiceRole,
+    ecsRepository: ecr.growthbookEcrRepository,
+    domain,
+    mongoDBStringParameter: secrets.growthbookMongoDBStringParameter,
+    encryptionKeyParameter: secrets.growthbookEncryptionKeyParameter,
+    jwtParameter: secrets.growthbookJWTParameter,
+    emailUsernameParameter: secrets.growthbookEmailUsernameParameter,
+    emailPasswordParameter: secrets.growthbookEmailPasswordParameter,
+  });
+  application.addDependency(automation);
+}

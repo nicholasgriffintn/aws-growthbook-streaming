@@ -88,12 +88,52 @@ class StreamingDemo {
       ?.addEventListener("click", () => this.sendManualOrder());
   }
 
+  generateRandomString(length) {
+    const chars = "0123456789abcdefghijklmnopqrstuvwxyz";
+    let result = "";
+
+    const cryptoObj =
+      (typeof window !== "undefined" && window.crypto) ||
+      (typeof self !== "undefined" && self.crypto) ||
+      null;
+
+    if (cryptoObj && typeof cryptoObj.getRandomValues === "function") {
+      const bytes = new Uint8Array(length);
+      cryptoObj.getRandomValues(bytes);
+      for (let i = 0; i < length; i++) {
+        result += chars[bytes[i] % chars.length];
+      }
+    } else {
+      // Fallback: preserve behavior if crypto is unavailable.
+      while (result.length < length) {
+        result += Math.random().toString(36).substr(2);
+      }
+      result = result.slice(0, length);
+    }
+
+    return result;
+  }
+
   randomUserId() {
-    return `user_${Math.random().toString(36).substr(2, 9)}`;
+    return `user_${this.generateRandomString(9)}`;
   }
 
   randomSessionId() {
-    return `sess_${Math.random().toString(36).substr(2, 9)}`;
+    const cryptoObj =
+      (typeof window !== 'undefined' && window.crypto) ||
+      (typeof globalThis !== 'undefined' && globalThis.crypto);
+    if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
+      const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz';
+      const bytes = new Uint8Array(9);
+      cryptoObj.getRandomValues(bytes);
+      let id = '';
+      for (let i = 0; i < bytes.length; i++) {
+        id += alphabet[bytes[i] % alphabet.length];
+      }
+      return `sess_${id}`;
+    }
+    // Fallback for environments without crypto.getRandomValues
+    return `sess_${this.generateRandomString(9)}`;
   }
 
   randomDeviceType() {

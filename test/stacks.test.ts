@@ -4,6 +4,7 @@ import { Match, Template } from "aws-cdk-lib/assertions";
 import { describe, it, expect, beforeAll } from "vitest";
 
 import { SecretsStack } from "../lib/stacks/secrets-stack";
+import { ApplicationStack } from "../lib/stacks/application-stack";
 import { ApiGatewayStack } from "../lib/stacks/api-gateway-stack";
 import { AutomationStack } from "../lib/stacks/automation-stack";
 import { FirehoseStack } from "../lib/stacks/firehose-stack";
@@ -105,6 +106,93 @@ describe("ApiGatewayStack", () => {
   });
 });
 
+describe("ApplicationStack (no custom domain)", () => {
+  const app = makeApp();
+
+  const importsStack = new cdk.Stack(app, "ApplicationImportsStack");
+  const vpc = cdk.aws_ec2.Vpc.fromVpcAttributes(importsStack, "Vpc", {
+    vpcId: "vpc-1234567890abcdef0",
+    availabilityZones: ["eu-west-1a", "eu-west-1b"],
+    publicSubnetIds: ["subnet-public-a", "subnet-public-b"],
+    privateSubnetIds: ["subnet-private-a", "subnet-private-b"],
+  });
+  const role = cdk.aws_iam.Role.fromRoleArn(
+    importsStack,
+    "TaskRole",
+    "arn:aws:iam::123456789012:role/growthbook-task-role",
+    { mutable: false },
+  );
+  const repo = cdk.aws_ecr.Repository.fromRepositoryName(
+    importsStack,
+    "Repo",
+    "growthbook",
+  );
+  const mongo = cdk.aws_ssm.StringParameter.fromStringParameterName(
+    importsStack,
+    "Mongo",
+    "/test/mongo",
+  );
+  const encryption = cdk.aws_ssm.StringParameter.fromStringParameterName(
+    importsStack,
+    "Encryption",
+    "/test/encryption",
+  );
+  const jwt = cdk.aws_ssm.StringParameter.fromStringParameterName(
+    importsStack,
+    "Jwt",
+    "/test/jwt",
+  );
+  const emailUser = cdk.aws_ssm.StringParameter.fromStringParameterName(
+    importsStack,
+    "EmailUser",
+    "/test/email-user",
+  );
+  const emailPassword = cdk.aws_ssm.StringParameter.fromStringParameterName(
+    importsStack,
+    "EmailPassword",
+    "/test/email-password",
+  );
+
+  const stack = new ApplicationStack(app, "TestApplicationStackNoDomain", {
+    vpc,
+    ecsTaskRole: role,
+    ecsRepository: repo,
+    mongoDBStringParameter: mongo,
+    encryptionKeyParameter: encryption,
+    jwtParameter: jwt,
+    emailUsernameParameter: emailUser,
+    emailPasswordParameter: emailPassword,
+  });
+  let template: Template;
+
+  beforeAll(() => {
+    template = Template.fromStack(stack);
+  });
+
+  it("does not create ACM certificates or Route53 records", () => {
+    template.resourceCountIs("AWS::CertificateManager::Certificate", 0);
+    template.resourceCountIs("AWS::Route53::RecordSet", 0);
+  });
+
+  it("creates separate app and API ALBs with HTTP listeners", () => {
+    template.resourceCountIs("AWS::ElasticLoadBalancingV2::LoadBalancer", 2);
+    template.resourceCountIs("AWS::ElasticLoadBalancingV2::Listener", 2);
+    template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 0);
+
+    template.hasResourceProperties("AWS::ElasticLoadBalancingV2::Listener", {
+      Port: 80,
+      Protocol: "HTTP",
+    });
+  });
+
+  it("emits both ALB URLs", () => {
+    const outputs = template.findOutputs("*");
+    const keys = Object.keys(outputs);
+    expect(keys).toContain("AppAlbUrl");
+    expect(keys).toContain("ApiAlbUrl");
+  });
+});
+
 describe("FirehoseStack", () => {
   const app = makeApp();
 
@@ -180,6 +268,19 @@ describe("RedshiftStack", () => {
     expect(keys).toContain("AdminSecretArn");
     expect(keys).toContain("GrowthbookUserSecretArn");
   });
+
+  it("places the workgroup in public subnets for Firehose connectivity", () => {
+    const workgroups = template.findResources(
+      "AWS::RedshiftServerless::Workgroup",
+    );
+    const workgroup = Object.values(workgroups)[0] as {
+      Properties: { SubnetIds: unknown };
+    };
+
+    const subnetIdsJson = JSON.stringify(workgroup.Properties.SubnetIds);
+    expect(subnetIdsJson).toContain("PublicSubnet");
+    expect(subnetIdsJson).not.toContain("PrivateSubnet");
+  });
 });
 
 describe("AutomationStack", () => {
@@ -196,8 +297,6 @@ describe("AutomationStack", () => {
     docdbEndpoint: "docdb-cluster.cluster-xyz.eu-west-1.docdb.amazonaws.com",
     mongoDbParameterArn: "arn:aws:ssm:eu-west-1:123456789012:parameter/mongo",
     mongoDbParameterName: "/growthbook/production/documentdb/dbstring",
-    ecsClusterArn: "arn:aws:ecs:eu-west-1:123456789012:cluster/my-cluster",
-    ecsServiceName: "growthbook",
     redshiftWorkgroupName: "growthbook-platform-wg",
     redshiftDatabase: "analytics",
     redshiftAdminSecretArn:
@@ -230,7 +329,7 @@ describe("AutomationStack", () => {
   it("redshift-init Lambda has a 2-minute timeout", () => {
     template.hasResourceProperties("AWS::Lambda::Function", {
       Description:
-        "Creates experimentation schema, fact tables, and growthbook_user in Redshift",
+        "Creates experimentation schema, fact tables, derived views, and growthbook_user in Redshift",
       Timeout: 120,
     });
   });

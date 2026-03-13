@@ -10,7 +10,6 @@ import type { BaseStackProps } from "../shared/types";
 export interface DocumentDbStackProps extends BaseStackProps {
   vpc: ec2.IVpc;
   kmsKey: kms.IKey;
-  ecsTaskSecurityGroup: ec2.ISecurityGroup;
 }
 
 export class DocumentDbStack extends cdk.Stack {
@@ -37,7 +36,10 @@ export class DocumentDbStack extends cdk.Stack {
       allowAllOutbound: false,
       description: "Security group for GrowthBook DocumentDB",
     });
-    docdbSg.addIngressRule(props.ecsTaskSecurityGroup, ec2.Port.tcp(27017));
+    docdbSg.addIngressRule(
+      ec2.Peer.ipv4(props.vpc.vpcCidrBlock),
+      ec2.Port.tcp(27017),
+    );
 
     this.cluster = new docdb.DatabaseCluster(this, "DocDbCluster", {
       dbClusterName: `${component}-docdb-${uniqueSuffix}`,

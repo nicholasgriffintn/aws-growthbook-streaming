@@ -59,14 +59,8 @@ export class IamStack extends cdk.Stack {
     this.growthbookServiceRole = new iam.Role(this, "GrowthBookServiceRole", {
       roleName: "prod-growthbookECSTask-iamRole",
       assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
-      description:
-        "IAM role for GrowthBook ECS tasks (task role and execution role)",
-      managedPolicies: [
-        this.growthbookServiceRolePolicy,
-        iam.ManagedPolicy.fromAwsManagedPolicyName(
-          "service-role/AmazonECSTaskExecutionRolePolicy",
-        ),
-      ],
+      description: "IAM role for GrowthBook ECS tasks",
+      managedPolicies: [this.growthbookServiceRolePolicy],
     });
   }
 }

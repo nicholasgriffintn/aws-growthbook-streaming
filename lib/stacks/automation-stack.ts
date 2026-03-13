@@ -16,8 +16,6 @@ export interface AutomationStackProps extends BaseStackProps {
   docdbEndpoint: string;
   mongoDbParameterArn: string;
   mongoDbParameterName: string;
-  ecsClusterArn: string;
-  ecsServiceName: string;
   redshiftWorkgroupName: string;
   redshiftDatabase: string;
   redshiftAdminSecretArn: string;
@@ -37,8 +35,6 @@ export class AutomationStack extends cdk.Stack {
       docdbEndpoint,
       mongoDbParameterArn,
       mongoDbParameterName,
-      ecsClusterArn,
-      ecsServiceName,
       redshiftWorkgroupName,
       redshiftDatabase,
       redshiftAdminSecretArn,
@@ -75,7 +71,7 @@ export class AutomationStack extends cdk.Stack {
 
     // -------------------------------------------------------------------------
     // Build the MongoDB connection string from the DocDB secret and write it
-    // to SSM, then force-restart the ECS service to pick up the new value.
+    // to SSM.
     // -------------------------------------------------------------------------
     const mongoInitFn = new lambda.Function(this, 'MongoInitFn', {
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -84,8 +80,7 @@ export class AutomationStack extends cdk.Stack {
         path.join(__dirname, '../../lambda/custom-resources/mongo-init'),
       ),
       timeout: cdk.Duration.seconds(60),
-      description:
-        'Sets MongoDB connection string in SSM and force-restarts ECS service',
+      description: 'Sets MongoDB connection string in SSM',
     });
     mongoInitFn.addToRolePolicy(
       new iam.PolicyStatement({
@@ -99,12 +94,6 @@ export class AutomationStack extends cdk.Stack {
         resources: [mongoDbParameterArn],
       }),
     );
-    mongoInitFn.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['ecs:UpdateService'],
-        resources: [ecsClusterArn + '/*', ecsClusterArn],
-      }),
-    );
     const mongoInitProvider = new cr.Provider(this, 'MongoInitProvider', {
       onEventHandler: mongoInitFn,
     });
@@ -114,13 +103,11 @@ export class AutomationStack extends cdk.Stack {
         secretArn: docdbSecretArn,
         endpoint: docdbEndpoint,
         ssmParam: mongoDbParameterName,
-        clusterArn: ecsClusterArn,
-        serviceName: ecsServiceName,
       },
     });
 
     // -------------------------------------------------------------------------
-    // Create Redshift schema, tables, and read-only growthbook_user.
+    // Create Redshift schema, fact tables, derived views, and read-only user.
     // -------------------------------------------------------------------------
     const redshiftInitFn = new lambda.Function(this, 'RedshiftInitFn', {
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -130,7 +117,7 @@ export class AutomationStack extends cdk.Stack {
       ),
       timeout: cdk.Duration.minutes(2),
       description:
-        'Creates experimentation schema, fact tables, and growthbook_user in Redshift',
+        'Creates experimentation schema, fact tables, derived views, and growthbook_user in Redshift',
     });
     redshiftInitFn.addToRolePolicy(
       new iam.PolicyStatement({

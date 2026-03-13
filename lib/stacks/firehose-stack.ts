@@ -13,6 +13,7 @@ import type { BaseStackProps } from "../shared/types";
 export interface FirehoseStackProps extends BaseStackProps {
   firehoseBackupBucket: s3.Bucket;
   redshiftEndpointAddress: string;
+  redshiftEndpointPort: string;
   redshiftDatabaseName: string;
   redshiftAdminSecret: secretsmanager.Secret;
 }
@@ -28,6 +29,7 @@ export class FirehoseStack extends cdk.Stack {
       component = "growthbook-platform",
       firehoseBackupBucket,
       redshiftEndpointAddress,
+      redshiftEndpointPort,
       redshiftDatabaseName,
       redshiftAdminSecret,
     } = props;
@@ -39,10 +41,7 @@ export class FirehoseStack extends cdk.Stack {
       adminSecret: redshiftAdminSecret,
     });
 
-    const jdbcUrl = `jdbc:redshift://${redshiftEndpointAddress}:5439/${redshiftDatabaseName}`;
-    const adminPassword = redshiftAdminSecret
-      .secretValueFromJson('password')
-      .toString();
+    const jdbcUrl = `jdbc:redshift://${redshiftEndpointAddress}:${redshiftEndpointPort}/${redshiftDatabaseName}`;
 
     const eventsLogGroup = new logs.LogGroup(this, "EventsFirehoseLogs", {
       logGroupName: `/aws/kinesisfirehose/${component}-events-${uniqueSuffix}`,
@@ -69,9 +68,12 @@ export class FirehoseStack extends cdk.Stack {
         deliveryStreamType: "DirectPut",
         redshiftDestinationConfiguration: {
           clusterJdbcurl: jdbcUrl,
-          username: "admin",
-          password: adminPassword,
           roleArn: firehoseIam.firehoseRole.roleArn,
+          secretsManagerConfiguration: {
+            enabled: true,
+            roleArn: firehoseIam.firehoseRole.roleArn,
+            secretArn: redshiftAdminSecret.secretArn,
+          },
           copyCommand: {
             dataTableName: "experimentation.fact_events",
             dataTableColumns:
@@ -83,7 +85,6 @@ export class FirehoseStack extends cdk.Stack {
             bucketArn: firehoseBackupBucket.bucketArn,
             roleArn: firehoseIam.firehoseRole.roleArn,
             prefix: "fact-events/",
-            errorOutputPrefix: "fact-events-errors/",
             compressionFormat: "UNCOMPRESSED",
             bufferingHints: { intervalInSeconds: 60, sizeInMBs: 1 },
           },
@@ -124,9 +125,12 @@ export class FirehoseStack extends cdk.Stack {
         deliveryStreamType: "DirectPut",
         redshiftDestinationConfiguration: {
           clusterJdbcurl: jdbcUrl,
-          username: "admin",
-          password: adminPassword,
           roleArn: firehoseIam.firehoseRole.roleArn,
+          secretsManagerConfiguration: {
+            enabled: true,
+            roleArn: firehoseIam.firehoseRole.roleArn,
+            secretArn: redshiftAdminSecret.secretArn,
+          },
           copyCommand: {
             dataTableName: "experimentation.fact_orders",
             dataTableColumns:
@@ -138,7 +142,6 @@ export class FirehoseStack extends cdk.Stack {
             bucketArn: firehoseBackupBucket.bucketArn,
             roleArn: firehoseIam.firehoseRole.roleArn,
             prefix: "fact-orders/",
-            errorOutputPrefix: "fact-orders-errors/",
             compressionFormat: "UNCOMPRESSED",
             bufferingHints: { intervalInSeconds: 60, sizeInMBs: 1 },
           },

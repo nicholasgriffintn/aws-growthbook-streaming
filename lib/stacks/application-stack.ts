@@ -17,7 +17,7 @@ export interface ApplicationStackProps extends BaseStackProps {
   vpc: ec2.IVpc;
   ecsTaskRole: iam.IRole;
   ecsRepository: ecr.IRepository;
-  domain: string;
+  domain?: string;
   mongoDBStringParameter: ssm.IStringParameter;
   encryptionKeyParameter: ssm.IStringParameter;
   jwtParameter: ssm.IStringParameter;
@@ -34,16 +34,19 @@ export class ApplicationStack extends cdk.Stack {
     super(scope, id, props);
 
     const { domain } = props;
-
-    const hostedZone = route53.HostedZone.fromLookup(this, "HostedZone", {
-      domainName: domain,
-    });
-
-    const certificate = new acm.Certificate(this, "Certificate", {
-      domainName: `growthbook.${domain}`,
-      subjectAlternativeNames: [`growthbook-api.${domain}`],
-      validation: acm.CertificateValidation.fromDns(hostedZone),
-    });
+    const useCustomDomain = Boolean(domain);
+    const hostedZone = useCustomDomain
+      ? route53.HostedZone.fromLookup(this, "HostedZone", {
+          domainName: domain!,
+        })
+      : undefined;
+    const certificate = useCustomDomain
+      ? new acm.Certificate(this, "Certificate", {
+          domainName: `growthbook.${domain}`,
+          subjectAlternativeNames: [`growthbook-api.${domain}`],
+          validation: acm.CertificateValidation.fromDns(hostedZone!),
+        })
+      : undefined;
 
     const logGroup = new logs.LogGroup(this, "LogGroup", {
       logGroupName: "/ecs/prod-growthbook-logs",
@@ -56,35 +59,125 @@ export class ApplicationStack extends cdk.Stack {
       containerInsights: true,
     });
 
+    const executionRole = new iam.Role(this, "GrowthBookExecutionRole", {
+      assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+      description: "Execution role for GrowthBook ECS tasks",
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName(
+          "service-role/AmazonECSTaskExecutionRolePolicy",
+        ),
+      ],
+    });
+
+    props.mongoDBStringParameter.grantRead(executionRole);
+    props.encryptionKeyParameter.grantRead(executionRole);
+    props.jwtParameter.grantRead(executionRole);
+    props.emailUsernameParameter.grantRead(executionRole);
+    props.emailPasswordParameter.grantRead(executionRole);
+
     const taskDefinition = new ecs.FargateTaskDefinition(
       this,
       "TaskDefinition",
       {
         family: "prod-growthbook-taskDef",
-        cpu: 256,
-        memoryLimitMiB: 512,
+        cpu: 1024,
+        memoryLimitMiB: 2048,
         taskRole: props.ecsTaskRole,
-        executionRole: props.ecsTaskRole,
+        executionRole,
       },
     );
 
-    taskDefinition.addContainer("growthbook", {
+    const appAlbSg = new ec2.SecurityGroup(
+      this,
+      useCustomDomain ? 'AlbSecurityGroup' : 'AppAlbSecurityGroup',
+      {
+        vpc: props.vpc,
+        allowAllOutbound: true,
+        description: useCustomDomain
+          ? 'Security group for GrowthBook ALB'
+          : 'Security group for GrowthBook app ALB',
+      },
+    );
+    appAlbSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80));
+    if (useCustomDomain) {
+      appAlbSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443));
+    }
+
+    const apiAlbSg = useCustomDomain
+      ? undefined
+      : new ec2.SecurityGroup(this, 'ApiAlbSecurityGroup', {
+          vpc: props.vpc,
+          allowAllOutbound: true,
+          description: 'Security group for GrowthBook API ALB',
+        });
+    if (apiAlbSg) {
+      apiAlbSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80));
+    }
+
+    this.ecsTaskSg = new ec2.SecurityGroup(this, "EcsTaskSecurityGroup", {
+      vpc: props.vpc,
+      allowAllOutbound: true,
+      description: "Security group for GrowthBook ECS tasks",
+    });
+    this.ecsTaskSg.addIngressRule(appAlbSg, ec2.Port.tcp(3000));
+    if (useCustomDomain) {
+      this.ecsTaskSg.addIngressRule(appAlbSg, ec2.Port.tcp(3100));
+    } else {
+      this.ecsTaskSg.addIngressRule(apiAlbSg!, ec2.Port.tcp(3100));
+    }
+
+    this.applicationLoadBalancer = new elbv2.ApplicationLoadBalancer(
+      this,
+      'Alb',
+      {
+        loadBalancerName: 'prod-growthbook-appLB',
+        vpc: props.vpc,
+        internetFacing: true,
+        securityGroup: appAlbSg,
+        vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      },
+    );
+
+    const apiLoadBalancer = useCustomDomain
+      ? undefined
+      : new elbv2.ApplicationLoadBalancer(this, 'ApiAlb', {
+          loadBalancerName: 'prod-growthbook-apiLB',
+          vpc: props.vpc,
+          internetFacing: true,
+          securityGroup: apiAlbSg!,
+          vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+        });
+
+    const apiHost = useCustomDomain
+      ? `https://growthbook-api.${domain}`
+      : `http://${apiLoadBalancer!.loadBalancerDnsName}`;
+    const appOrigin = useCustomDomain
+      ? `https://growthbook.${domain}`
+      : `http://${this.applicationLoadBalancer.loadBalancerDnsName}`;
+    const corsOriginRegex = useCustomDomain
+      ? undefined
+      : `^https?://prod-growthbook-appLB-[0-9]+\\.${this.region}\\.elb\\.amazonaws\\.com$`;
+    const emailFromDomain = domain ?? "localhost";
+
+    taskDefinition.addContainer('growthbook', {
       image: ecs.ContainerImage.fromEcrRepository(
         props.ecsRepository,
-        "latest",
+        'latest',
       ),
       portMappings: [
         { containerPort: 3000, protocol: ecs.Protocol.TCP },
         { containerPort: 3100, protocol: ecs.Protocol.TCP },
       ],
       environment: {
-        API_HOST: `https://growthbook-api.${domain}`,
-        APP_ORIGIN: `https://growthbook.${domain}`,
-        NODE_ENV: "production",
-        EMAIL_ENABLED: "true",
+        API_HOST: apiHost,
+        APP_ORIGIN: appOrigin,
+        ...(corsOriginRegex ? { CORS_ORIGIN_REGEX: corsOriginRegex } : {}),
+        NODE_ENV: 'production',
+        BACKEND_PORT: '3100',
+        EMAIL_ENABLED: 'false',
         EMAIL_HOST: `email-smtp.${this.region}.amazonaws.com`,
-        EMAIL_PORT: "587",
-        EMAIL_FROM: `no-reply@${domain}`,
+        EMAIL_PORT: '587',
+        EMAIL_FROM: `no-reply@${emailFromDomain}`,
       },
       secrets: {
         ENCRYPTION_KEY: ecs.Secret.fromSsmParameter(
@@ -100,97 +193,81 @@ export class ApplicationStack extends cdk.Stack {
         ),
       },
       logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: "ecs",
+        streamPrefix: 'ecs',
         logGroup,
       }),
     });
 
-    const albSg = new ec2.SecurityGroup(this, "AlbSecurityGroup", {
-      vpc: props.vpc,
-      allowAllOutbound: true,
-      description: "Security group for GrowthBook ALB",
-    });
-    albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80));
-    albSg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443));
-
-    this.ecsTaskSg = new ec2.SecurityGroup(this, "EcsTaskSecurityGroup", {
-      vpc: props.vpc,
-      allowAllOutbound: true,
-      description: "Security group for GrowthBook ECS tasks",
-    });
-    this.ecsTaskSg.addIngressRule(albSg, ec2.Port.tcp(3000));
-    this.ecsTaskSg.addIngressRule(albSg, ec2.Port.tcp(3100));
-
-    this.applicationLoadBalancer = new elbv2.ApplicationLoadBalancer(
-      this,
-      "Alb",
-      {
-        loadBalancerName: "prod-growthbook-appLB",
-        vpc: props.vpc,
-        internetFacing: true,
-        securityGroup: albSg,
-        vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-      },
-    );
-
     const appTargetGroup = new elbv2.ApplicationTargetGroup(
       this,
-      "AppTargetGroup",
+      'AppTargetGroup',
       {
-        targetGroupName: "prod-growthbookApp-tg",
+        targetGroupName: 'prod-growthbookApp-tg',
         port: 3000,
         protocol: elbv2.ApplicationProtocol.HTTP,
         vpc: props.vpc,
         targetType: elbv2.TargetType.IP,
         healthCheck: {
-          path: "/",
-          healthyHttpCodes: "200",
+          path: '/',
+          healthyHttpCodes: '200,301,302',
         },
       },
     );
 
     const apiTargetGroup = new elbv2.ApplicationTargetGroup(
       this,
-      "ApiTargetGroup",
+      'ApiTargetGroup',
       {
-        targetGroupName: "prod-growthbookApi-tg",
+        targetGroupName: 'prod-growthbookApi-tg',
         port: 3100,
         protocol: elbv2.ApplicationProtocol.HTTP,
         vpc: props.vpc,
         targetType: elbv2.TargetType.IP,
         healthCheck: {
-          path: "/api/health",
-          healthyHttpCodes: "200",
+          path: '/healthcheck',
+          healthyHttpCodes: '200',
         },
       },
     );
 
-    this.applicationLoadBalancer.addListener("HttpListener", {
-      port: 80,
-      defaultAction: elbv2.ListenerAction.redirect({
-        protocol: "HTTPS",
-        port: "443",
-        permanent: true,
-      }),
-    });
+    if (useCustomDomain) {
+      this.applicationLoadBalancer.addListener("HttpListener", {
+        port: 80,
+        defaultAction: elbv2.ListenerAction.redirect({
+          protocol: "HTTPS",
+          port: "443",
+          permanent: true,
+        }),
+      });
 
-    const httpsListener = this.applicationLoadBalancer.addListener(
-      "HttpsListener",
-      {
-        port: 443,
-        certificates: [certificate],
-        sslPolicy: elbv2.SslPolicy.RECOMMENDED_TLS,
+      const httpsListener = this.applicationLoadBalancer.addListener(
+        "HttpsListener",
+        {
+          port: 443,
+          certificates: [certificate!],
+          sslPolicy: elbv2.SslPolicy.RECOMMENDED_TLS,
+          defaultTargetGroups: [appTargetGroup],
+        },
+      );
+
+      httpsListener.addAction("ApiAction", {
+        priority: 1,
+        conditions: [
+          elbv2.ListenerCondition.hostHeaders([`growthbook-api.${domain}`]),
+        ],
+        action: elbv2.ListenerAction.forward([apiTargetGroup]),
+      });
+    } else {
+      this.applicationLoadBalancer.addListener('HttpListener', {
+        port: 80,
         defaultTargetGroups: [appTargetGroup],
-      },
-    );
+      });
 
-    httpsListener.addAction("ApiAction", {
-      priority: 1,
-      conditions: [
-        elbv2.ListenerCondition.hostHeaders([`growthbook-api.${domain}`]),
-      ],
-      action: elbv2.ListenerAction.forward([apiTargetGroup]),
-    });
+      apiLoadBalancer!.addListener('ApiHttpListener', {
+        port: 80,
+        defaultTargetGroups: [apiTargetGroup],
+      });
+    }
 
     const ecsService = new ecs.FargateService(this, "EcsService", {
       serviceName: "growthbook",
@@ -200,6 +277,7 @@ export class ApplicationStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [this.ecsTaskSg],
       circuitBreaker: { rollback: true },
+      healthCheckGracePeriod: cdk.Duration.seconds(120),
     });
 
     const scaling = ecsService.autoScaleTaskCount({
@@ -226,20 +304,32 @@ export class ApplicationStack extends cdk.Stack {
       }),
     );
 
-    new route53.ARecord(this, "AppRecord", {
-      zone: hostedZone,
-      recordName: `growthbook.${domain}`,
-      target: route53.RecordTarget.fromAlias(
-        new route53Targets.LoadBalancerTarget(this.applicationLoadBalancer),
-      ),
-    });
+    if (useCustomDomain) {
+      new route53.ARecord(this, 'AppRecord', {
+        zone: hostedZone!,
+        recordName: `growthbook.${domain}`,
+        target: route53.RecordTarget.fromAlias(
+          new route53Targets.LoadBalancerTarget(this.applicationLoadBalancer),
+        ),
+      });
 
-    new route53.ARecord(this, "ApiRecord", {
-      zone: hostedZone,
-      recordName: `growthbook-api.${domain}`,
-      target: route53.RecordTarget.fromAlias(
-        new route53Targets.LoadBalancerTarget(this.applicationLoadBalancer),
-      ),
-    });
+      new route53.ARecord(this, 'ApiRecord', {
+        zone: hostedZone!,
+        recordName: `growthbook-api.${domain}`,
+        target: route53.RecordTarget.fromAlias(
+          new route53Targets.LoadBalancerTarget(this.applicationLoadBalancer),
+        ),
+      });
+    } else {
+      new cdk.CfnOutput(this, 'AppAlbUrl', {
+        value: `http://${this.applicationLoadBalancer.loadBalancerDnsName}`,
+        description: 'GrowthBook app ALB URL',
+      });
+
+      new cdk.CfnOutput(this, 'ApiAlbUrl', {
+        value: `http://${apiLoadBalancer!.loadBalancerDnsName}`,
+        description: 'GrowthBook API ALB URL',
+      });
+    }
   }
 }

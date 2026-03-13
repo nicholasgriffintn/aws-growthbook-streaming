@@ -15,6 +15,7 @@ export class RedshiftStack extends cdk.Stack {
   public readonly adminSecret: secretsmanager.Secret;
   public readonly growthbookUserSecret: secretsmanager.Secret;
   public readonly workgroupEndpointAddress: string;
+  public readonly workgroupEndpointPort: string;
   public readonly databaseName: string;
   public readonly namespaceName: string;
   public readonly workgroupName: string;
@@ -73,7 +74,7 @@ export class RedshiftStack extends cdk.Stack {
       adminUsername: "admin",
       adminUserPassword: this.adminSecret
         .secretValueFromJson("password")
-        .toString(),
+        .unsafeUnwrap(),
       iamRoles: [this.redshiftRole.roleArn],
     });
     namespace.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
@@ -93,21 +94,30 @@ export class RedshiftStack extends cdk.Stack {
     this.securityGroup.addIngressRule(
       ec2.Peer.anyIpv4(),
       ec2.Port.tcp(5439),
-      "Kinesis Firehose — required for JDBC delivery from managed service",
+      "Kinesis Firehose - required for JDBC delivery from managed service",
     );
 
-    const workgroup = new redshiftserverless.CfnWorkgroup(this, "Workgroup", {
+    if (vpc.publicSubnets.length === 0) {
+      throw new Error(
+        'Redshift workgroup requires public subnets for Firehose connectivity.',
+      );
+    }
+
+    const workgroup = new redshiftserverless.CfnWorkgroup(this, 'Workgroup', {
       workgroupName: this.workgroupName,
       namespaceName: namespace.namespaceName,
       baseCapacity: 8,
+      enhancedVpcRouting: false,
+      port: 5439,
       publiclyAccessible: true,
-      subnetIds: vpc.privateSubnets.map((s) => s.subnetId),
+      subnetIds: vpc.publicSubnets.map((s) => s.subnetId),
       securityGroupIds: [this.securityGroup.securityGroupId],
     });
     workgroup.addDependency(namespace);
     workgroup.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
     this.workgroupEndpointAddress = workgroup.attrWorkgroupEndpointAddress;
+    this.workgroupEndpointPort = "5439";
 
     new cdk.CfnOutput(this, "WorkgroupEndpoint", {
       value: this.workgroupEndpointAddress,
